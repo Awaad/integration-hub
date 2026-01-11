@@ -2,10 +2,10 @@ import uuid
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base
+from app.models.base import Base, AuditMixin
 
 
-class Partner(Base):
+class Partner(AuditMixin, Base):
     __tablename__ = "partners"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"prt_{uuid.uuid4().hex}")

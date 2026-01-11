@@ -4,10 +4,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from sqlalchemy.types import DateTime
 
-from app.models.base import Base
+from app.models.base import Base, AuditMixin
 
 
-class ApiKey(Base):
+class ApiKey(AuditMixin, Base):
     __tablename__ = "api_keys"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"key_{uuid.uuid4().hex}")

@@ -13,6 +13,7 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 @dataclass(frozen=True)
 class Actor:
+    api_key_id: str
     tenant_id: str
     partner_id: str
     role: str  # "partner_admin" | "agent"
@@ -33,6 +34,7 @@ async def get_actor(
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     return Actor(
+        api_key_id=row.id,
         tenant_id=row.tenant_id,
         partner_id=row.partner_id,
         role=row.role,

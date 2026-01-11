@@ -2,10 +2,10 @@ import uuid
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base
+from app.models.base import Base, AuditMixin
 
 
-class Tenant(Base):
+class Tenant(AuditMixin, Base):
     __tablename__ = "tenants"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"tnt_{uuid.uuid4().hex}")

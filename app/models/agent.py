@@ -3,10 +3,10 @@ from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base
+from app.models.base import Base, AuditMixin
 
 
-class Agent(Base):
+class Agent(AuditMixin, Base):
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"agt_{uuid.uuid4().hex}")

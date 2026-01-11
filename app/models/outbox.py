@@ -5,10 +5,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from sqlalchemy.types import DateTime, Integer
 
-from app.models.base import Base
+from app.models.base import Base, AuditMixin
 
 
-class OutboxEvent(Base):
+class OutboxEvent(AuditMixin, Base):
     __tablename__ = "outbox"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"obx_{uuid.uuid4().hex}")

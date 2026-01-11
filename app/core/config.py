@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Security
     api_key_pepper: SecretStr = SecretStr("IN_ENV")
 
+    # bootstrap protection (temporary)
+    internal_admin_key: str = "IN_ENV"
+
     # Telemetry
     otlp_endpoint: str = "http://localhost:4318"  # Jaeger OTLP HTTP
 
