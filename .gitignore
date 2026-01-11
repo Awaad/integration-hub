@@ -1,0 +1,80 @@
+# Python / Poetry / Virtualenv
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Poetry
+poetry.lock  # remove this line if you want to commit the lockfile (recommended for apps)
+poetry.toml
+
+# Test / Coverage / Type checking
+
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+
+# Ruff
+
+.ruff_cache/
+
+# FastAPI/Uvicorn runtime
+
+*.log
+logs/
+uvicorn.log
+
+# Alembic / DB
+
+
+*.db
+*.sqlite3
+
+# Celery / Redis
+
+celerybeat-schedule
+celerybeat.pid
+
+# Environment / Secrets
+
+.env
+*.env
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Misc
+
+.cache/
+*.swp
+*.swo
+
+TODO.txt
