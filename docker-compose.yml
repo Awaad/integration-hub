@@ -13,24 +13,32 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:4.2.2-management
     ports: ["5672:5672", "15672:15672"]
+    volumes:
+      - hub_rabbitmq:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
 
   redis:
     image: redis:8.4.0
     ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - hub_redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
 
   jaeger:
     image: jaegertracing/all-in-one:1.76.0
@@ -38,6 +46,21 @@ services:
       - "16686:16686"   # UI
       - "4317:4317"     # OTLP gRPC
       - "4318:4318"     # OTLP HTTP
+    restart: unless-stopped
+  
+  jaeger_health:
+    image: curlimages/curl:latest
+    depends_on:
+      - jaeger
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://jaeger:14269/"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+    restart: unless-stopped
 
 volumes:
   hub_pg:
+  hub_rabbitmq:
+  hub_redis:
