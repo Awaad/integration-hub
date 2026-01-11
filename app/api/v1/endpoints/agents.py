@@ -27,6 +27,8 @@ async def create_agent(
         email=str(payload.email),
         display_name=payload.display_name,
         rules=payload.rules,
+        created_by=actor.api_key_id,
+        updated_by=actor.api_key_id,
     )
     db.add(agent)
     await db.commit()
@@ -89,6 +91,8 @@ async def update_agent(
         agent.is_active = payload.is_active
     if payload.rules is not None:
         agent.rules = payload.rules
+    if payload.updated_by is not None:
+        agent.updated_by = actor.api_key_id
 
     await db.commit()
 
@@ -139,6 +143,8 @@ async def rotate_agent_api_key(
         key_prefix=new_key.prefix,
         key_hash=new_key.hashed,
         is_active=True,
+        created_by=actor.api_key_id,
+        updated_by=actor.api_key_id,
     )
     db.add(row)
     await db.commit()
