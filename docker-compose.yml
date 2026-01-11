@@ -1,10 +1,11 @@
 services:
   postgres:
     image: postgres:18.1-bookworm
+    env_file: .env
     environment:
-      POSTGRES_USER: hub
-      POSTGRES_PASSWORD: hub
-      POSTGRES_DB: hub
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports: ["5432:5432"]
     volumes:
       - hub_pg:/var/lib/postgresql
@@ -17,6 +18,10 @@ services:
 
   rabbitmq:
     image: rabbitmq:4.2.2-management
+    env_file: .env
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports: ["5672:5672", "15672:15672"]
     volumes:
       - hub_rabbitmq:/var/lib/rabbitmq
@@ -48,17 +53,6 @@ services:
       - "4318:4318"     # OTLP HTTP
     restart: unless-stopped
   
-  jaeger_health:
-    image: curlimages/curl:latest
-    depends_on:
-      - jaeger
-    command: ["sh", "-c", "while true; do sleep 3600; done"]
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://jaeger:14269/"]
-      interval: 5s
-      timeout: 3s
-      retries: 40
-    restart: unless-stopped
 
 volumes:
   hub_pg:
