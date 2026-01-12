@@ -10,3 +10,9 @@ class PartnerBootstrapOut(BaseModel):
     tenant_id: str
     partner_id: str
     partner_admin_api_key: str
+
+
+class PartnerRotateKeyOut(BaseModel):
+    tenant_id: str
+    partner_id: str
+    partner_admin_api_key: str
