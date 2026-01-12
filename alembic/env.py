@@ -14,6 +14,7 @@ from app.models.api_key import ApiKey  # noqa: F401
 from app.models.outbox import OutboxEvent  # noqa: F401
 from app.models.agent_credential import AgentCredential  # noqa: F401
 from app.models.listing import Listing  # noqa: F401
+from app.models.idempotency import IdempotencyKey  # noqa: F401
 
 
 config = context.config

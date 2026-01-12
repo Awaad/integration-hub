@@ -1,4 +1,3 @@
-import uuid
 from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
