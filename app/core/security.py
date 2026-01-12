@@ -24,6 +24,7 @@ def generate_api_key(prefix_len: int = 8) -> ApiKeyParts:
 
 def hash_api_key(plain: str) -> str:
     # Pepper protects against rainbow tables if DB leaks.
-    salted = (plain + settings.api_key_pepper).encode("utf-8")
+    pepper = settings.api_key_pepper.get_secret_value()
+    salted = (plain + pepper).encode("utf-8")
     digest = hashlib.sha256(salted).digest()
     return base64.b64encode(digest).decode("utf-8")
