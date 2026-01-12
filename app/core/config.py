@@ -28,5 +28,8 @@ class Settings(BaseSettings):
     # Telemetry
     otlp_endpoint: str = "http://localhost:4318"  # Jaeger OTLP HTTP
 
+    # Encryption
+    credentials_encryption_key: SecretStr = SecretStr("IN_ENV")
+
 
 settings = Settings()

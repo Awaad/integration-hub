@@ -12,6 +12,8 @@ from app.models.partner import Partner  # noqa: F401
 from app.models.agent import Agent  # noqa: F401
 from app.models.api_key import ApiKey  # noqa: F401
 from app.models.outbox import OutboxEvent  # noqa: F401
+from app.models.agent_credential import AgentCredential  # noqa: F401
+
 
 config = context.config
 fileConfig(config.config_file_name)
