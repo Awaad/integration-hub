@@ -3,7 +3,7 @@ from cryptography.fernet import Fernet
 
 from app.core.config import settings
 
-_fernet = Fernet(settings.credentials_encryption_key.encode("utf-8"))
+_fernet = Fernet(settings.credentials_encryption_key.get_secret_value().encode("utf-8"))
 
 
 def encrypt_json(data: dict) -> str:
