@@ -24,3 +24,6 @@ class OutboxEvent(AuditMixin, Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     sent_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    processing_started_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processed_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)

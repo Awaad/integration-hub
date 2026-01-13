@@ -6,6 +6,7 @@ from app.api.v1.endpoints.agents import router as agents_router
 from app.api.v1.endpoints.me import router as me_router
 from app.api.v1.endpoints.credentials import router as credentials_router
 from app.api.v1.endpoints.listings import router as listings_router
+from app.api.v1.endpoints.internal import router as internal_router
 
 
 router = APIRouter(prefix="/v1")
@@ -15,3 +16,4 @@ router.include_router(agents_router, tags=["agents"])
 router.include_router(me_router, tags=["me"])
 router.include_router(credentials_router, tags=["credentials"])
 router.include_router(listings_router, tags=["listings"])
+router.include_router(internal_router, tags=["internal"])
