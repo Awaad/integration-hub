@@ -5,6 +5,7 @@ celery = Celery(
     "hub-worker",
     broker=settings.rabbitmq_url,
     backend=settings.redis_url,
+    include=["worker.tasks"],
 )
 
 celery.conf.update(
