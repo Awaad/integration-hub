@@ -122,6 +122,8 @@ async def upsert_listing(
                 "content_hash": listing.content_hash,
             },
             status="pending",
+            created_by=actor.api_key_id,
+            updated_by=actor.api_key_id,
         )
     )
 
