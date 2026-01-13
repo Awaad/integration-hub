@@ -27,3 +27,6 @@ class OutboxEvent(AuditMixin, Base):
 
     processing_started_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
     processed_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    lease_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
