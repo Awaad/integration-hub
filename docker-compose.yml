@@ -16,6 +16,22 @@ services:
       retries: 20
     restart: unless-stopped
 
+  postgres_test:
+    image: postgres:18.1-bookworm
+    env_file: .env
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_PASSWORD: hub
+      POSTGRES_DB: hub_test
+    ports: ["5433:5432"]
+    volumes:
+      - hub_pg_test:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hub -d hub_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   rabbitmq:
     image: rabbitmq:4.2.2-management
     env_file: .env
@@ -56,5 +72,6 @@ services:
 
 volumes:
   hub_pg:
+  hub_pg_test:
   hub_rabbitmq:
   hub_redis:
