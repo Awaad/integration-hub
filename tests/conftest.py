@@ -1,12 +1,15 @@
 import os
+from dotenv import load_dotenv
 import asyncio
 import pytest
+import pytest_asyncio
+from httpx import AsyncClient
 import httpx
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy import event
+from sqlalchemy.pool import NullPool
 
-# Import Base + all models so metadata is complete
 from app.models.base import Base  # AuditMixin lives here
 from app.models.tenant import Tenant  # noqa: F401
 from app.models.partner import Partner  # noqa: F401
@@ -21,25 +24,27 @@ from app.main import app
 from app.core.db import get_db
 
 
+load_dotenv()
+pytest_plugins = ("tests.fixtures_seed",)
+
+os.environ.setdefault("INTERNAL_ADMIN_KEY", "test-internal")
+
 def _test_db_url() -> str:
     url = os.getenv("DATABASE_URL_TEST")
     if not url:
         raise RuntimeError("DATABASE_URL_TEST is not set")
     return url
 
-
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture
 async def async_engine():
-    engine = create_async_engine(_test_db_url(), future=True, pool_pre_ping=True)
+    # NullPool prevents reusing connections across event loops (Windows-safe)
+    engine = create_async_engine(
+        _test_db_url(),
+        poolclass=NullPool,
+        future=True,
+    )
     try:
-        # Create schema once per test session
+        # Create schema fresh for each test (reliable + simple)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
@@ -48,27 +53,19 @@ async def async_engine():
         await engine.dispose()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session(async_engine):
-    """
-    Transactional rollback per test:
-    - Start an outer transaction
-    - Start a nested transaction (SAVEPOINT)
-    - Restart SAVEPOINT after each internal commit (SQLAlchemy pattern)
-    """
     async with async_engine.connect() as conn:
         trans = await conn.begin()
 
-        session_factory = async_sessionmaker(bind=conn, expire_on_commit=False, class_=AsyncSession)
-        session = session_factory()
+        Session = async_sessionmaker(bind=conn, expire_on_commit=False, class_=AsyncSession)
+        session = Session()
 
         await session.begin_nested()
 
         @event.listens_for(session.sync_session, "after_transaction_end")
         def _restart_savepoint(sess, transaction):
-            # If the nested transaction ended, start a new one
-            parent = getattr(transaction, "_parent", None)
-            if transaction.nested and parent is not None and not parent.nested:
+            if transaction.nested and not transaction._parent.nested:
                 sess.begin_nested()
 
         try:
@@ -78,7 +75,7 @@ async def db_session(async_engine):
             await trans.rollback()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(db_session: AsyncSession):
     """
     HTTP client that uses the test DB session via dependency override.
@@ -87,7 +84,6 @@ async def client(db_session: AsyncSession):
         yield db_session
 
     app.dependency_overrides[get_db] = _override_get_db
-
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
