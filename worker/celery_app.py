@@ -1,13 +1,12 @@
 from celery import Celery
 from app.core.config import settings
-import worker.tasks  # noqa
-import worker.tasks_publish  # noqa
+
 
 celery = Celery(
     "hub-worker",
     broker=settings.rabbitmq_url,
     backend=settings.redis_url,
-    include=["worker.tasks"],
+    include=["worker.tasks", "worker.tasks_publish"],
 )
 
 celery.conf.update(
