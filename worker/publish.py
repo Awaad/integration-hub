@@ -12,59 +12,34 @@ from app.models.listing import Listing
 MAX_DELIVERY_ATTEMPTS = 5
 
 
-async def publish_to_destination(
-    db: AsyncSession,
-    *,
-    listing: Listing,
-    destination: str,
-) -> None:
-    # Find credential for this agent+destination
+async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
+    d = (await db.execute(select(Delivery).where(Delivery.id == delivery_id))).scalar_one_or_none()
+    if not d:
+        return
+
+    if d.dead_lettered_at is not None:
+        return
+
+    listing = (await db.execute(select(Listing).where(Listing.id == d.listing_id))).scalar_one()
+
+    # Credentials by agent+destination
     cred = (await db.execute(
         select(AgentCredential).where(
-            AgentCredential.tenant_id == listing.tenant_id,
-            AgentCredential.partner_id == listing.partner_id,
-            AgentCredential.agent_id == listing.agent_id,
-            AgentCredential.destination == destination,
+            AgentCredential.tenant_id == d.tenant_id,
+            AgentCredential.partner_id == d.partner_id,
+            AgentCredential.agent_id == d.agent_id,
+            AgentCredential.destination == d.destination,
             AgentCredential.is_active.is_(True),
         )
     )).scalar_one_or_none()
 
     if not cred:
-        # No creds -> non-retryable fail
-        await _record_delivery_attempt(
-            db, listing, destination,
-            ok=False, retryable=False,
+        await _record_attempt_failure(
+            db, d,
             error_code="NO_CREDENTIALS",
             error_message="No active credentials for destination",
-            response={}
+            retryable=False,
         )
-        return
-
-    secrets = decrypt_json(cred.secret_ciphertext)
-    connector = get_connector(destination)
-
-    d = (await db.execute(
-        select(Delivery).where(
-            Delivery.tenant_id == listing.tenant_id,
-            Delivery.destination == destination,
-            Delivery.listing_id == listing.id,
-        )
-    )).scalar_one_or_none()
-
-    if not d:
-        d = Delivery(
-            tenant_id=listing.tenant_id,
-            partner_id=listing.partner_id,
-            agent_id=listing.agent_id,
-            listing_id=listing.id,
-            destination=destination,
-            status="pending",
-            attempts=0,
-        )
-        db.add(d)
-        await db.flush()
-
-    if d.dead_lettered_at is not None:
         return
 
     if d.attempts >= MAX_DELIVERY_ATTEMPTS:
@@ -72,6 +47,9 @@ async def publish_to_destination(
         d.dead_lettered_at = func.now()
         d.status_detail = "max attempts exceeded"
         return
+
+    secrets = decrypt_json(cred.secret_ciphertext)
+    connector = get_connector(d.destination)
 
     result = await connector.publish_listing(
         listing={"id": listing.id, "payload": listing.payload, "schema": listing.schema},
@@ -81,15 +59,14 @@ async def publish_to_destination(
     d.attempts += 1
     d.last_attempt_at = func.now()
 
-    attempt = DeliveryAttempt(
+    db.add(DeliveryAttempt(
         delivery_id=d.id,
         status="success" if result.ok else "failed",
-        request={"listing_id": listing.id, "content_hash": listing.content_hash, "destination": destination},
+        request={"listing_id": listing.id, "content_hash": listing.content_hash, "destination": d.destination},
         response=result.detail or {},
         error_code=result.error_code,
         error_message=result.error_message,
-    )
-    db.add(attempt)
+    ))
 
     if result.ok:
         d.status = "success"
@@ -106,51 +83,24 @@ async def publish_to_destination(
             d.dead_lettered_at = func.now()
 
 
-async def _record_delivery_attempt(
-    db: AsyncSession,
-    listing: Listing,
-    destination: str,
-    *,
-    ok: bool,
-    retryable: bool,
-    error_code: str,
-    error_message: str,
-    response: dict,
-) -> None:
-    d = (await db.execute(
-        select(Delivery).where(
-            Delivery.tenant_id == listing.tenant_id,
-            Delivery.destination == destination,
-            Delivery.listing_id == listing.id,
-        )
-    )).scalar_one_or_none()
-
-    if not d:
-        d = Delivery(
-            tenant_id=listing.tenant_id,
-            partner_id=listing.partner_id,
-            agent_id=listing.agent_id,
-            listing_id=listing.id,
-            destination=destination,
-            status="pending",
-            attempts=0,
-        )
-        db.add(d)
-        await db.flush()
-
+async def _record_attempt_failure(db: AsyncSession, d: Delivery, *, error_code: str, error_message: str, retryable: bool) -> None:
     d.attempts += 1
     d.last_attempt_at = func.now()
-    d.status = "failed" if retryable else "dead_lettered"
     d.last_error = error_message
     d.status_detail = error_code
-    if not retryable:
-        d.dead_lettered_at = func.now()
 
     db.add(DeliveryAttempt(
         delivery_id=d.id,
         status="failed",
-        request={"listing_id": listing.id, "destination": destination},
-        response=response,
+        request={"delivery_id": d.id, "destination": d.destination},
+        response={},
         error_code=error_code,
         error_message=error_message,
     ))
+
+    if retryable:
+        d.status = "failed"
+    else:
+        d.status = "dead_lettered"
+        d.dead_lettered_at = func.now()
+
