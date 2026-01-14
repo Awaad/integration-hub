@@ -1,4 +1,4 @@
-import uuid
+from app.core.ids import gen_id
 from sqlalchemy import ForeignKey, String, Integer, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -14,7 +14,7 @@ class Delivery(Base):
         UniqueConstraint("tenant_id", "destination", "listing_id", name="uq_delivery_dest_listing"),
     )
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"dly_{uuid.uuid4().hex}")
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("dly"))
     tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), nullable=False)
     partner_id: Mapped[str] = mapped_column(String, ForeignKey("partners.id"), nullable=False)
     agent_id: Mapped[str] = mapped_column(String, ForeignKey("agents.id"), nullable=False)
@@ -27,13 +27,17 @@ class Delivery(Base):
 
     last_attempt_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_success_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    next_retry_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retryable: Mapped[bool] = mapped_column(nullable=False, default=True)
+    
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class DeliveryAttempt(Base):
     __tablename__ = "delivery_attempts"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"att_{uuid.uuid4().hex}")
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("att"))
     delivery_id: Mapped[str] = mapped_column(String, ForeignKey("deliveries.id"), nullable=False)
 
     status: Mapped[str] = mapped_column(String(30), nullable=False)  # success/failed
