@@ -44,3 +44,7 @@ class DeliveryAttempt(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dead_lettered_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
