@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.sql import func
 
 from worker.celery_app import celery
+from worker.publish import publish_to_destination
 from app.core.config import settings
 import app.models  # noqa: F401  # ensures Models are registered
 from app.models.outbox import OutboxEvent
@@ -37,6 +38,7 @@ async def _process_outbox_event(outbox_id: str, lease_id: str) -> None:
                 allowed = agent.rules.get("allowed_destinations", [])
 
                 for destination in allowed:
+                    await publish_to_destination(db, listing=listing, destination=destination)
                     d = (await db.execute(
                         select(Delivery).where(
                             Delivery.tenant_id == listing.tenant_id,
