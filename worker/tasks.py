@@ -5,6 +5,7 @@ from sqlalchemy.sql import func
 
 from worker.celery_app import celery
 from app.core.config import settings
+import app.models  # noqa: F401  # ensures Models are registered
 from app.models.outbox import OutboxEvent
 from app.models.listing import Listing
 from app.models.agent import Agent
