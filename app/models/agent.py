@@ -1,4 +1,4 @@
-import uuid
+from app.core.ids import gen_id
 from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -9,7 +9,7 @@ from app.models.base import Base, AuditMixin
 class Agent(AuditMixin, Base):
     __tablename__ = "agents"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"agt_{uuid.uuid4().hex}")
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("agt"))
     tenant_id: Mapped[str] = mapped_column(String, ForeignKey("tenants.id"), nullable=False)
     partner_id: Mapped[str] = mapped_column(String, ForeignKey("partners.id"), nullable=False)
 
