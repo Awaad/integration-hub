@@ -4,13 +4,12 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.sql import func
 
 from worker.celery_app import celery
-from worker.publish import publish_to_destination
 from app.core.config import settings
 import app.models  # noqa: F401  # ensures Models are registered
 from app.models.outbox import OutboxEvent
 from app.models.listing import Listing
 from app.models.agent import Agent
-from app.models.delivery import Delivery, DeliveryAttempt
+from app.models.delivery import Delivery
 
 
 async def _process_outbox_event(outbox_id: str, lease_id: str) -> None:
@@ -38,7 +37,6 @@ async def _process_outbox_event(outbox_id: str, lease_id: str) -> None:
                 allowed = agent.rules.get("allowed_destinations", [])
 
                 for destination in allowed:
-                    await publish_to_destination(db, listing=listing, destination=destination)
                     d = (await db.execute(
                         select(Delivery).where(
                             Delivery.tenant_id == listing.tenant_id,
@@ -55,33 +53,38 @@ async def _process_outbox_event(outbox_id: str, lease_id: str) -> None:
                             listing_id=listing.id,
                             destination=destination,
                             status="pending",
+                            attempts=0,
                         )
                         db.add(d)
-                        await db.flush()
+                    else:
+                        # If listing changed again, re-queue if it was failed/pending/publishing
+                        # If already success, we still want to republish when content changes.
+                        # We keep it simple: set to pending unless dead_lettered.
+                        if d.dead_lettered_at is None:
+                            d.status = "pending"
+                            d.last_error = None
+                            d.status_detail = None
+                            # if we have next_retry_at clear it here
+                            if hasattr(d, "next_retry_at"):
+                                d.next_retry_at = None
 
-                    attempt = DeliveryAttempt(
-                        delivery_id=d.id,
-                        status="success",
-                        request={"content_hash": listing.content_hash, "schema": listing.schema},
-                        response={"mock": True},
-                    )
-                    db.add(attempt)
+                    # store "last_synced_hash" in ListingExternalMapping later 
+                    # so publishing can skip if no change.
 
-                    d.status = "success"
-                    d.last_attempt_at = func.now()
-                    d.last_success_at = func.now()
 
-            # Mark done only if lease still matches
-            result = await db.execute(
-                update(OutboxEvent)
-                .where(OutboxEvent.id == outbox_id, OutboxEvent.lease_id == lease_id)
-                .values(
-                    status="done",
-                    processed_at=func.now(),
-                    lease_id=None,
-                    lease_expires_at=None,
-                )
-            )
+                        # Mark done only if lease still matches
+                        result = await db.execute(
+                            update(OutboxEvent)
+                            .where(OutboxEvent.id == outbox_id, OutboxEvent.lease_id == lease_id)
+                            .values(
+                                status="done",
+                                processed_at=func.now(),
+                                lease_id=None,
+                                lease_expires_at=None,
+                            )
+                        )
+
+
             if result.rowcount == 0:
                 # lease lost; do not overwrite
                 await db.rollback()

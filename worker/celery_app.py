@@ -14,5 +14,6 @@ celery.conf.update(
     task_default_queue="default",
     task_routes={
         "worker.tasks.process_outbox_event": {"queue": "outbox"},
+        "worker.tasks.publish_delivery": {"queue": "publish"},
     },
 )
