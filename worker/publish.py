@@ -7,6 +7,7 @@ from app.core.crypto import decrypt_json
 from app.models.agent_credential import AgentCredential
 from app.models.delivery import Delivery, DeliveryAttempt
 from app.models.listing import Listing
+from app.models.listing_external_mapping import ListingExternalMapping
 
 from datetime import datetime, timedelta, timezone
 from app.services.retry import compute_backoff_seconds
@@ -17,13 +18,27 @@ MAX_DELIVERY_ATTEMPTS = 5
 
 async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
     d = (await db.execute(select(Delivery).where(Delivery.id == delivery_id))).scalar_one_or_none()
-    if not d:
-        return
-
-    if d.dead_lettered_at is not None:
+    if not d or d.dead_lettered_at is not None:
         return
 
     listing = (await db.execute(select(Listing).where(Listing.id == d.listing_id))).scalar_one()
+
+    mapping = (await db.execute(
+        select(ListingExternalMapping).where(
+            ListingExternalMapping.tenant_id == d.tenant_id,
+            ListingExternalMapping.destination == d.destination,
+            ListingExternalMapping.listing_id == listing.id,
+        )
+    )).scalar_one_or_none()
+
+    # SKIP if already synced same hash (regardless of current status)
+    if mapping and mapping.last_synced_hash == listing.content_hash:
+        d.status = "success"
+        d.next_retry_at = None
+        d.last_error = None
+        d.status_detail = None
+        d.last_success_at = func.now()
+        return
 
     # Credentials by agent+destination
     cred = (await db.execute(
@@ -43,39 +58,32 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
             error_message="No active credentials for destination",
             retryable=False,
         )
+        d.next_retry_at = None
         return
-    
-    # count the attempt upfront
-    d.attempts += 1
-    d.last_attempt_at = func.now()
 
     if d.attempts >= MAX_DELIVERY_ATTEMPTS:
         d.status = "dead_lettered"
         d.dead_lettered_at = func.now()
         d.status_detail = "max attempts exceeded"
+        d.next_retry_at = None
         return
+
 
     secrets = decrypt_json(cred.secret_ciphertext)
     connector = get_connector(d.destination)
 
     result = await connector.publish_listing(
-        listing={"id": listing.id, "payload": listing.payload, "schema": listing.schema},
+        listing={
+            "id": listing.id,
+            "payload": listing.payload,
+            "schema": listing.schema,
+            "external_listing_id": mapping.external_listing_id if mapping else None,
+        },
         credentials=secrets,
     )
 
-    now = datetime.now(timezone.utc)
-
-    if d.status == "success":
-        d.next_retry_at = None
-
-    elif d.status == "failed" and d.dead_lettered_at is None:
-        # retryable failures get a schedule
-        seconds = compute_backoff_seconds(d.attempts)
-        d.next_retry_at = now + timedelta(seconds=seconds)
-
-    elif d.status == "dead_lettered":
-        d.next_retry_at = None
-
+    d.attempts += 1
+    d.last_attempt_at = func.now()
 
     db.add(DeliveryAttempt(
         delivery_id=d.id,
@@ -86,20 +94,48 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
         error_message=result.error_message,
     ))
 
+    now = datetime.now(timezone.utc)
+
     if result.ok:
+        if not mapping:
+            mapping = ListingExternalMapping(
+                tenant_id=d.tenant_id,
+                partner_id=d.partner_id,
+                agent_id=d.agent_id,
+                listing_id=listing.id,
+                destination=d.destination,
+                external_listing_id=result.external_id,
+                last_synced_hash=listing.content_hash,
+                metadata={},
+            )
+            db.add(mapping)
+        else:
+            if result.external_id:
+                mapping.external_listing_id = result.external_id
+            mapping.last_synced_hash = listing.content_hash
+
         d.status = "success"
         d.last_success_at = func.now()
         d.last_error = None
         d.status_detail = None
-    else:
-        d.status = "failed"
-        d.last_error = result.error_message
-        d.status_detail = result.error_code
+        d.next_retry_at = None
+        return
+    
+    # Failure
+    d.status = "failed"
+    d.last_error = result.error_message
+    d.status_detail = result.error_code
 
-        if (not result.retryable) or (d.attempts >= MAX_DELIVERY_ATTEMPTS):
-            d.status = "dead_lettered"
-            d.dead_lettered_at = func.now()
+    if (not result.retryable) or (d.attempts >= MAX_DELIVERY_ATTEMPTS):
+        d.status = "dead_lettered"
+        d.dead_lettered_at = func.now()
+        d.next_retry_at = None
+        return
 
+    # retryable scheduling
+    seconds = compute_backoff_seconds(d.attempts)
+    d.next_retry_at = now + timedelta(seconds=seconds)
+    
 
 async def _record_attempt_failure(db: AsyncSession, d: Delivery, *, error_code: str, error_message: str, retryable: bool) -> None:
     d.attempts += 1
