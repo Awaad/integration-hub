@@ -8,6 +8,9 @@ from app.models.agent_credential import AgentCredential
 from app.models.delivery import Delivery, DeliveryAttempt
 from app.models.listing import Listing
 
+from datetime import datetime, timedelta, timezone
+from app.services.retry import compute_backoff_seconds
+
 
 MAX_DELIVERY_ATTEMPTS = 5
 
@@ -41,6 +44,10 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
             retryable=False,
         )
         return
+    
+    # count the attempt upfront
+    d.attempts += 1
+    d.last_attempt_at = func.now()
 
     if d.attempts >= MAX_DELIVERY_ATTEMPTS:
         d.status = "dead_lettered"
@@ -56,8 +63,19 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
         credentials=secrets,
     )
 
-    d.attempts += 1
-    d.last_attempt_at = func.now()
+    now = datetime.now(timezone.utc)
+
+    if d.status == "success":
+        d.next_retry_at = None
+
+    elif d.status == "failed" and d.dead_lettered_at is None:
+        # retryable failures get a schedule
+        seconds = compute_backoff_seconds(d.attempts)
+        d.next_retry_at = now + timedelta(seconds=seconds)
+
+    elif d.status == "dead_lettered":
+        d.next_retry_at = None
+
 
     db.add(DeliveryAttempt(
         delivery_id=d.id,

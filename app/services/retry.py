@@ -1,5 +1,4 @@
 import random
-from datetime import timedelta
 
 def compute_backoff_seconds(attempt: int, base: int = 10, cap: int = 900) -> int:
     # exponential backoff with jitter
