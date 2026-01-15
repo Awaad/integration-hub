@@ -28,6 +28,10 @@ class Delivery(Base):
     last_attempt_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_success_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dead_lettered_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     next_retry_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
     retryable: Mapped[bool] = mapped_column(nullable=False, default=True)
     
@@ -49,6 +53,4 @@ class DeliveryAttempt(Base):
 
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    status_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    dead_lettered_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+   
