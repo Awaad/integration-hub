@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class AgentExternalIdentityUpsert(BaseModel):
+    destination: str = Field(min_length=1, max_length=120)
     external_agent_id: str = Field(..., max_length=200)
     metadata: dict = Field(default_factory=dict)
     is_active: bool = True
