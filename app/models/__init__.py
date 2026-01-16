@@ -10,3 +10,6 @@ from app.models.delivery import Delivery, DeliveryAttempt  # noqa: F401
 from app.models.agent_credential import AgentCredential  # noqa: F401
 from app.models.idempotency import IdempotencyKey  # noqa: F401
 from app.models.source_listing_mapping import SourceListingMapping  # noqa: F401
+from app.models.agent_external_identity import AgentExternalIdentity  # noqa: F401
+from app.models.ingest_run import IngestRun  # noqa: F401
+from app.models.listing_external_mapping import ListingExternalMapping  # noqa: F401
