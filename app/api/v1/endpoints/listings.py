@@ -1,5 +1,3 @@
-import hashlib
-import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,20 +7,16 @@ from app.models.agent import Agent
 from app.models.listing import Listing
 from app.models.outbox import OutboxEvent
 from app.schemas.listing import ListingOut, ListingUpsert
-from app.services.auth import Actor, get_actor, require_partner_admin, require_agent
-from app.services.idempotency import (
-    get_or_reserve_idempotency,
-    require_idempotency_key,
-    store_idempotency_response,
-)
+from app.services.auth import Actor, get_actor
 
+from app.services.idempotency import (
+    get_or_reserve_idempotency, 
+    require_idempotency_key, 
+    store_idempotency_response,
+    )
+from app.services.listings import upsert_listing_record
 
 router = APIRouter()
-
-
-def _hash_payload(payload: dict) -> str:
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
 async def _assert_agent_exists(db: AsyncSession, tenant_id: str, partner_id: str, agent_id: str) -> None:
@@ -42,6 +36,8 @@ def _enforce_actor_scope(actor: Actor, partner_id: str, agent_id: str) -> None:
         raise HTTPException(status_code=403, detail="Agent cannot act for another agent")
 
 
+
+
 @router.put(
     "/partners/{partner_id}/agents/{agent_id}/listings/{source_listing_id}",
     response_model=ListingOut,
@@ -59,6 +55,8 @@ async def upsert_listing(
     _enforce_actor_scope(actor, partner_id, agent_id)
     await _assert_agent_exists(db, actor.tenant_id, partner_id, agent_id)
 
+    
+    # Use original request body for idempotency reservation checks
     body_dict = payload.model_dump()
     existing_idm, _ = await get_or_reserve_idempotency(
         db=db,
@@ -71,60 +69,16 @@ async def upsert_listing(
         # Safe retry: return stored response
         return ListingOut(**existing_idm.response)
 
-    stmt = select(Listing).where(
-        Listing.tenant_id == actor.tenant_id,
-        Listing.partner_id == partner_id,
-        Listing.agent_id == agent_id,
-        Listing.source_listing_id == source_listing_id,
-    )
-    listing = (await db.execute(stmt)).scalar_one_or_none()
-
-    content_hash = _hash_payload(body_dict)
-
-    if listing:
-        listing.status = payload.status
-        listing.schema = payload.schema
-        listing.schema_version = payload.schema_version
-        listing.payload = payload.payload
-        listing.content_hash = content_hash
-        listing.updated_by = actor.api_key_id
-    else:
-        listing = Listing(
-            tenant_id=actor.tenant_id,
-            partner_id=partner_id,
-            agent_id=agent_id,
-            source_listing_id=source_listing_id,
-            status=payload.status,
-            schema=payload.schema,
-            schema_version=payload.schema_version,
-            payload=payload.payload,
-            content_hash=content_hash,
-            created_by=actor.api_key_id,
-            updated_by=actor.api_key_id,
-        )
-        db.add(listing)
-
-    await db.flush()
-
-    db.add(
-        OutboxEvent(
-            aggregate_type="listing",
-            aggregate_id=listing.id,
-            event_type="listing.upserted",
-            payload={
-                "tenant_id": actor.tenant_id,
-                "partner_id": partner_id,
-                "agent_id": agent_id,
-                "listing_id": listing.id,
-                "source_listing_id": source_listing_id,
-                "schema": listing.schema,
-                "schema_version": listing.schema_version,
-                "content_hash": listing.content_hash,
-            },
-            status="pending",
-            created_by=actor.api_key_id,
-            updated_by=actor.api_key_id,
-        )
+    listing = await upsert_listing_record(
+        db=db,
+        actor=actor,
+        partner_id=partner_id,
+        agent_id=agent_id,
+        source_listing_id=source_listing_id,
+        status=payload.status,
+        schema=payload.schema,
+        schema_version=payload.schema_version,
+        incoming_payload=payload.payload,
     )
 
     resp = ListingOut(
