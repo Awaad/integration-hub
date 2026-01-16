@@ -34,8 +34,10 @@ async def preview_adapter_mapping(
         if not a:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-    adapter = get_adapter(partner_key)
+    adapter = get_adapter(partner_key, body.adapter_version)
 
+    partner_key = partner_key.lower().strip()
+    
     ctx = AdapterContext(
         tenant_id=actor.tenant_id,
         partner_id=partner_id,
@@ -53,6 +55,7 @@ async def preview_adapter_mapping(
             canonical=None,
             normalized=None,
             content_hash=None,
+            adapter_version=adapter.version,
             errors=mapped.errors,
         )
 
@@ -86,6 +89,7 @@ async def preview_adapter_mapping(
         canonical_schema_version=canonical_payload.get("schema_version", "1.0"),
         canonical=canonical_payload,
         normalized=res.normalized,
-        content_hash=res.content_hash,
+        content_hash="sha256:" + res.content_hash if res.content_hash else None,
+        adapter_version=adapter.version,
         errors=[],
     )

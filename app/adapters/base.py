@@ -31,6 +31,7 @@ class PartnerAdapter(Protocol):
     PartnerAdapter maps partner/source payload -> canonical.listing@1.0 dict.
     """
     partner_key: str
+    version: str
 
     def map_listing(
         self,

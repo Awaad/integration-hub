@@ -34,6 +34,7 @@ class IngestRun(Base):
     agent_id: Mapped[str] = mapped_column(String, ForeignKey("agents.id"), nullable=False)
 
     partner_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    adapter_version: Mapped[str] = mapped_column(String(40), nullable=False)
     source_listing_id: Mapped[str] = mapped_column(String(200), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
 

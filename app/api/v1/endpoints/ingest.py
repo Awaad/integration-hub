@@ -35,8 +35,9 @@ async def ingest_listing_endpoint(
             raise HTTPException(status_code=422, detail="agent_id is required for partner_admin ingest")
         agent_id = body.agent_id
 
+    allow_override = (actor.role == "partner_admin")
     try:
-        listing, material_change, ingest_run_id = await ingest_listing(
+        listing, material_change, ingest_run_id, used_version = await ingest_listing(
             db=db,
             tenant_id=actor.tenant_id,
             partner_id=actor.partner_id,
@@ -45,6 +46,8 @@ async def ingest_listing_endpoint(
             source_listing_id=source_listing_id,
             idempotency_key=idempotency_key,
             partner_payload=body.payload,
+            adapter_version=body.adapter_version,
+            allow_adapter_override=allow_override,
         )
     except IngestError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)

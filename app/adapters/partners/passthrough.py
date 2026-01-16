@@ -6,12 +6,13 @@ from app.adapters.base import AdapterContext, AdapterResult
 from app.services.canonical_validate import validate_and_normalize_canonical
 
 
-class PassthroughAdapter:
+class PassthroughAdapterV1:
     """
     Assumes payload is already canonical.listing@1.0 (or close).
     Validates + normalizes and returns canonical dict.
     """
     partner_key = "passthrough"
+    version = "1.0"
 
     def map_listing(self, *, payload: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
         # Ensure schema markers exist (helpful for sources that omit them)
