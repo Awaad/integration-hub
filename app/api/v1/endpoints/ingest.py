@@ -36,13 +36,14 @@ async def ingest_listing_endpoint(
         agent_id = body.agent_id
 
     try:
-        listing, material_change = await ingest_listing(
+        listing, material_change, ingest_run_id = await ingest_listing(
             db=db,
             tenant_id=actor.tenant_id,
             partner_id=actor.partner_id,
             agent_id=agent_id,
             partner_key=partner_key,
             source_listing_id=source_listing_id,
+            idempotency_key=idempotency_key,
             partner_payload=body.payload,
         )
     except IngestError as e:
@@ -71,4 +72,5 @@ async def ingest_listing_endpoint(
         schema_version=listing.schema_version,
         content_hash=listing.content_hash,
         material_change=material_change,
+        ingest_run_id=ingest_run_id,
     )

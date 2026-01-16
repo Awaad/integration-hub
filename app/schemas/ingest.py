@@ -10,6 +10,7 @@ class IngestListingRequest(BaseModel):
     agent_id: str | None = None
 
 class IngestListingResponse(BaseModel):
+    ingest_run_id: str
     listing_id: str
     source_listing_id: str
     schema: str
