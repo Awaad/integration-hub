@@ -2,6 +2,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 from typing import Any
 from app.services.listings import normalize_listing_payload_or_raise
+from app.services.redaction import redact_payload
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -56,9 +57,17 @@ async def ingest_listing(
     requested_version = adapter_version
     used_version = requested_version or default_version
 
-    if requested_version and not allow_adapter_override:
-        # still record a run; but we’ll mark it failed and store the requested version in errors
-        used_version = default_version
+    forbidden_override = bool(requested_version) and (not allow_adapter_override)
+    if forbidden_override:
+        run.errors = [{
+            "type": "forbidden",
+            "message": "adapter_version override not allowed",
+            "requested_adapter_version": requested_version,
+            "used_adapter_version": used_version,
+        }]
+        run.status = "failed"
+        await db.flush()
+        raise IngestError(403, {"errors": run.errors, "ingest_run_id": run.id})
 
     run = IngestRun(
         tenant_id=tenant_id,
@@ -67,7 +76,7 @@ async def ingest_listing(
         partner_key=partner_key_norm,
         source_listing_id=source_listing_id,
         idempotency_key=idempotency_key,
-        raw_payload=partner_payload,
+        raw_payload=redact_payload(partner_payload),
         canonical_payload=None,
         errors=[],
         status="failed", 
@@ -92,9 +101,9 @@ async def ingest_listing(
 
         if existing.status == "success" and existing.listing_id:
             listing = (await db.execute(select(Listing).where(Listing.id == existing.listing_id))).scalar_one()
-            return listing, False, existing.id
+            return listing, False, existing.id, existing.adapter_version
         
-        return None, False, existing.id
+        return None, False, existing.id, existing.adapter_version
 
     try:
         # adapter selection rules

@@ -46,7 +46,7 @@ async def ingest_listing_endpoint(
             source_listing_id=source_listing_id,
             idempotency_key=idempotency_key,
             partner_payload=body.payload,
-            adapter_version=body.adapter_version,
+            adapter_version=used_version,
             allow_adapter_override=allow_override,
         )
     except IngestError as e:

@@ -11,6 +11,7 @@ from app.api.v1.endpoints.deliveries import router as deliveries_router
 from app.api.v1.endpoints.ingest import router as ingest_router
 from app.api.v1.endpoints.ingest_runs import router as ingest_runs_router
 from app.api.v1.endpoints.adapter_preview import router as adapter_preview_router
+from app.api.v1.endpoints.ingest_replay import router as ingest_replay_router
 
 
 router = APIRouter(prefix="/v1")
@@ -25,3 +26,4 @@ router.include_router(deliveries_router, tags=["deliveries"])
 router.include_router(ingest_router, tags=["ingest"])
 router.include_router(ingest_runs_router, tags=["ingest_runs"])
 router.include_router(adapter_preview_router, tags=["adapter_preview"]) 
+router.include_router(ingest_replay_router, tags=["ingest-replay"])
