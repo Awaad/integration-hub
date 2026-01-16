@@ -1,17 +1,17 @@
 from __future__ import annotations
-
+from fastapi import HTTPException
 from typing import Any
+from app.services.listings import normalize_listing_payload_or_raise
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from app.adapters.base import AdapterContext
-from app.adapters.registry import get_adapter
+from app.adapters.registry import get_adapter, default_adapter_version
 from app.core.ids import gen_id
 from app.models.source_listing_mapping import SourceListingMapping
 from app.models.listing import Listing
 from app.models.ingest_run import IngestRun
-from app.services.canonical_validate import validate_and_normalize_canonical
 
 
 class IngestError(Exception):
@@ -19,6 +19,17 @@ class IngestError(Exception):
         super().__init__(str(detail))
         self.status_code = status_code
         self.detail = detail
+
+
+def _extract_errors(detail: Any) -> list[dict[str, Any]]:
+    """
+    Normalize various error shapes into list[dict] for run.errors.
+    """
+    if isinstance(detail, dict) and isinstance(detail.get("errors"), list):
+        return detail["errors"]
+    if isinstance(detail, list):
+        return detail
+    return [{"type": "error", "message": str(detail)}]
 
 
 async def ingest_listing(
@@ -31,12 +42,23 @@ async def ingest_listing(
     source_listing_id: str,
     idempotency_key: str,
     partner_payload: dict[str, Any],
-) -> tuple[Listing, bool]:
+    adapter_version: str | None,
+    allow_adapter_override: bool,
+) -> tuple[Listing | None, bool, str, str]:
     """
-    Returns (listing, material_change).
+    Returns (listing, material_change, ingest_run_id).
+    - listing may be None for idempotent replays of prior failed ingests.
     - material_change=True when content_hash changed (new outbox event is warranted).
     """
     partner_key_norm = partner_key.lower().strip()
+
+    default_version = default_adapter_version(partner_key_norm)
+    requested_version = adapter_version
+    used_version = requested_version or default_version
+
+    if requested_version and not allow_adapter_override:
+        # still record a run; but we’ll mark it failed and store the requested version in errors
+        used_version = default_version
 
     run = IngestRun(
         tenant_id=tenant_id,
@@ -50,6 +72,7 @@ async def ingest_listing(
         errors=[],
         status="failed", 
         listing_id=None,
+        adapter_version=used_version,
     )
     db.add(run)
 
@@ -66,17 +89,37 @@ async def ingest_listing(
             IngestRun.source_listing_id == source_listing_id,
             IngestRun.idempotency_key == idempotency_key,
         ))).scalar_one()
+
         if existing.status == "success" and existing.listing_id:
             listing = (await db.execute(select(Listing).where(Listing.id == existing.listing_id))).scalar_one()
             return listing, False, existing.id
+        
         return None, False, existing.id
 
     try:
-        # adapter mapping 
-        adapter = get_adapter(partner_key_norm)
-        ctx = AdapterContext(tenant_id=tenant_id, partner_id=partner_id, agent_id=agent_id, source_listing_id=source_listing_id)
+        # adapter selection rules
+        if adapter_version and not allow_adapter_override:
+            run.errors = [{"type": "forbidden", "message": "adapter_version override not allowed"}]
+            run.status = "failed"
+            await db.flush()
+            raise IngestError(403, {"errors": run.errors, "ingest_run_id": run.id})
+
+        used_version = adapter_version or default_adapter_version(partner_key_norm)
+        run.adapter_version = used_version
+
+        adapter = get_adapter(partner_key_norm, used_version)
+
+        # adapter mapping
+        ctx = AdapterContext(
+            tenant_id=tenant_id, 
+            partner_id=partner_id, 
+            agent_id=agent_id, 
+            source_listing_id=source_listing_id, 
+        )
         mapped = adapter.map_listing(payload=partner_payload, ctx=ctx)
+
         if not mapped.ok or not mapped.canonical:
+
             run.errors = mapped.errors
             run.status = "failed"
             await db.flush()
@@ -102,16 +145,23 @@ async def ingest_listing(
         canonical_payload["canonical_id"] = listing_id
         canonical_payload["source_listing_id"] = source_listing_id
 
-        # canonical validate+normalize
-        res = validate_and_normalize_canonical(schema="canonical.listing", schema_version="1.0", payload=canonical_payload)
-        if not res.ok or not res.normalized or not res.content_hash:
+        # canonical validate+normalize (shared logic with API upsert)
+        try:
+            normalized_payload, content_hash = normalize_listing_payload_or_raise(
+                schema="canonical.listing",
+                schema_version="1.0",
+                incoming_payload=canonical_payload,
+            )
+        except HTTPException as exc:
+            # Normalize to ingest run error shape and raise IngestError
+            errors = _extract_errors(getattr(exc, "detail", str(exc)))
             run.canonical_payload = canonical_payload
-            run.errors = res.errors
+            run.errors = errors
             run.status = "failed"
             await db.flush()
-            raise IngestError(422, {"errors": res.errors, "ingest_run_id": run.id})
+            raise IngestError(exc.status_code, {"errors": errors, "ingest_run_id": run.id})
 
-        run.canonical_payload = res.normalized
+        run.canonical_payload = normalized_payload
 
         # upsert listing
         listing = (await db.execute(select(Listing).where(
@@ -131,32 +181,38 @@ async def ingest_listing(
                 agent_id=agent_id,
                 schema="canonical.listing",
                 schema_version="1.0",
-                payload=res.normalized,
-                content_hash=res.content_hash,
-                status=res.normalized.get("status", "draft"),
+                payload=normalized_payload,
+                content_hash=content_hash,
+                status=normalized_payload.get("status", "draft"),
                 created_by="ingest",
                 updated_by="ingest",
             )
             db.add(listing)
             material_change = True
         else:
-            if listing.content_hash != res.content_hash:
+            if listing.content_hash != content_hash:
                 material_change = True
-                listing.payload = res.normalized
-                listing.content_hash = res.content_hash
-                listing.status = res.normalized.get("status", listing.status)
+                listing.payload = normalized_payload
+                listing.content_hash = content_hash
+                listing.status = normalized_payload.get("status", listing.status)
                 listing.updated_by = "ingest"
 
+        # upsert mapping
         if not mapping:
             mapping = SourceListingMapping(
                 tenant_id=tenant_id,
                 partner_id=partner_id,
                 agent_id=agent_id,
                 partner_key=partner_key_norm,
+                adapter_version=used_version,
                 source_listing_id=source_listing_id,
                 listing_id=listing_id,
             )
             db.add(mapping)
+        else:
+            # Keep mapping updated with the last-used adapter version
+            if mapping.adapter_version != used_version:
+                mapping.adapter_version = used_version
 
         await db.flush()
 
@@ -165,7 +221,13 @@ async def ingest_listing(
         run.listing_id = listing_id
 
         await db.flush()
-        return listing, material_change, run.id
+
+        return listing, material_change, run.id, used_version
 
     except IngestError:
+        raise
+    except Exception as e:
+        run.errors = [{"type": "internal_error", "message": str(e)}]
+        run.status = "failed"
+        await db.flush()
         raise
