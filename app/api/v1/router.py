@@ -15,6 +15,7 @@ from app.api.v1.endpoints.ingest_replay import router as ingest_replay_router
 from app.api.v1.endpoints.partner_destinations import router as partner_dest_router
 from app.api.v1.endpoints.feeds import router as feeds_router
 from app.api.v1.endpoints.public_feeds import router as public_feeds_router
+from app.api.v1.endpoints.mapping_validation import router as mapping_validation_router
 
 
 
@@ -34,3 +35,4 @@ router.include_router(ingest_replay_router, tags=["ingest-replay"])
 router.include_router(partner_dest_router, tags=["partner-destinations"])
 router.include_router(feeds_router, tags=["feeds"])
 router.include_router(public_feeds_router, tags=["public-feeds"])
+router.include_router(mapping_validation_router, tags=["mapping-validation"])
