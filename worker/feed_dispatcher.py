@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from app.destinations.connector_registry import get_destination_connector
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
@@ -28,9 +29,14 @@ async def _tick():
         built = 0
         for s in rows:
             # only handle hosted_feed destinations (we’ll check via registry later)
-            # for now, assume destination config includes {"transport": "hosted_feed"}
-            transport = (s.config or {}).get("transport")
-            if transport != "hosted_feed":
+            try:
+                connector = get_destination_connector(s.destination)
+            except KeyError:
+                log.warning("feed_dispatcher: unknown destination=%s (skipping)", s.destination)
+                continue
+
+            caps = connector.capabilities()
+            if caps.transport != "hosted_feed":
                 continue
 
             await build_partner_feed_snapshot(
