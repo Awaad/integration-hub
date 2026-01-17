@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from app.destinations.base import DestinationCapabilities, PublishResult, DestinationConnector
+from app.destinations.capabilities import DestinationCapabilities
+from app.destinations.registry import DestinationConnector, PublishResult
 
 
 class Evler101HostedFeedConnector(DestinationConnector):
