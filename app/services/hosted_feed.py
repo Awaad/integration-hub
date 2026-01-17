@@ -7,6 +7,9 @@ from app.models.listing import Listing
 from app.models.feed_snapshot import FeedSnapshot
 from app.services.feed_generator import generate_xml_feed
 from app.services.storage import LocalObjectStore
+from app.models.partner_destination_setting import PartnerDestinationSetting
+from app.services.feeds.evler101_xml import build_101evler_xml
+
 
 async def build_partner_feed_snapshot(
     db: AsyncSession,
@@ -16,7 +19,16 @@ async def build_partner_feed_snapshot(
     destination: str,
     store: LocalObjectStore,
 ) -> FeedSnapshot:
-    # For now: include active listings only
+    
+    setting = (await db.execute(select(PartnerDestinationSetting).where(
+        PartnerDestinationSetting.tenant_id == tenant_id,
+        PartnerDestinationSetting.partner_id == partner_id,
+        PartnerDestinationSetting.destination == destination,
+    ))).scalar_one()
+
+    cfg = setting.config or {}
+
+    # fetch listings + their updated_at
     rows = (await db.execute(
         select(Listing).where(
             Listing.tenant_id == tenant_id,
@@ -26,10 +38,24 @@ async def build_partner_feed_snapshot(
         )
     )).scalars().all()
 
-    canonical_listings = [ListingCanonicalV1.model_validate(r.payload) for r in rows]
+    pairs = [(ListingCanonicalV1.model_validate(r.payload), r.updated_at) for r in rows]
 
-    xml_bytes, content_hash, count = generate_xml_feed(canonical_listings)
+    if destination == "101evler":
+        xml_bytes, warnings, count = build_101evler_xml(listings=pairs, config=cfg)
+        feed_format = "xml"
+        meta = {"generator": "101evler_xml_v1", "warnings": [w.__dict__ for w in warnings]}
+    else:
+        # fallback generic feed 
+        xml_bytes, content_hash, count = generate_xml_feed([p[0] for p in pairs])
+        warnings = []
+        feed_format = "xml"
+        meta = {"generator": "xml_v1"}
 
+    # compute content hash from bytes
+    import hashlib
+    content_hash = hashlib.sha256(xml_bytes).hexdigest()
+
+    # store file key includes destination
     key = f"{tenant_id}/{partner_id}/{destination}/feed.xml"
     uri = store.put_bytes(key=key, data=xml_bytes)
 
@@ -38,10 +64,10 @@ async def build_partner_feed_snapshot(
         partner_id=partner_id,
         destination=destination,
         storage_uri=uri,
-        format="xml",
+        format=feed_format,
         content_hash=content_hash,
         listing_count=count,
-        meta={"generator": "xml_v1"},
+        meta=meta,
         created_by="system",
         updated_by="system",
     )

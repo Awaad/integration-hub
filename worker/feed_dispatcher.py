@@ -8,6 +8,8 @@ from app.core.config import settings
 from app.models.partner_destination_setting import PartnerDestinationSetting
 from app.services.hosted_feed import build_partner_feed_snapshot
 from app.services.storage import LocalObjectStore
+from app.services.partner_destination_config import ensure_feed_token
+
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +40,14 @@ async def _tick():
             caps = connector.capabilities()
             if caps.transport != "hosted_feed":
                 continue
+
+            # Ensure destination has a feed_token before generating snapshot
+            await ensure_feed_token(
+                db,
+                tenant_id=s.tenant_id,
+                partner_id=s.partner_id,
+                destination=s.destination,
+            )
 
             await build_partner_feed_snapshot(
                 db,
