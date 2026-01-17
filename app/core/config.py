@@ -31,5 +31,9 @@ class Settings(BaseSettings):
     # Encryption
     credentials_encryption_key: SecretStr = SecretStr("IN_ENV")
 
+    # Storage local object store dir
+    
+    FEED_STORAGE_DIR: str = "./var/feeds"
+
 
 settings = Settings()

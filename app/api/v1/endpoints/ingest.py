@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.schemas.ingest import IngestListingRequest, IngestListingResponse
-from app.services.auth import Actor, require_api_key  
+from app.services.auth import Actor, require_partner_admin 
 from app.services.ingest import ingest_listing, IngestError
 
 from app.models.outbox import OutboxEvent
@@ -16,7 +16,7 @@ async def ingest_listing_endpoint(
     partner_key: str,
     source_listing_id: str,
     body: IngestListingRequest,
-    actor: Actor = Depends(require_api_key),
+    actor: Actor = Depends(require_partner_admin),
     db: AsyncSession = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> IngestListingResponse:

@@ -61,4 +61,15 @@ async def publish_projected_payload(
     credentials: dict,
 ):
     connector = get_destination_connector(destination)
+    caps = connector.capabilities()
+
+    if caps.transport == "pull_only":
+        return await connector.publish_listing(payload=payload, credentials=credentials)  # likely NOT_SUPPORTED
+
+    if caps.transport == "hosted_feed":
+        # Hosted feed: publishing is not per listing; it’s snapshot generation.
+        # We'll return a synthetic success and let Phase 5.2 optimize to batch snapshots.
+        return await connector.publish_listing(payload=payload, credentials=credentials)
+
+    # push_api
     return await connector.publish_listing(payload=payload, credentials=credentials)
