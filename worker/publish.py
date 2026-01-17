@@ -1,15 +1,17 @@
+from __future__ import annotations
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from app.connectors.registry import get_connector
 from app.core.crypto import decrypt_json
 from app.models.agent_credential import AgentCredential
 from app.models.delivery import Delivery, DeliveryAttempt
 from app.models.listing import Listing
 from app.models.listing_external_mapping import ListingExternalMapping
+from app.services.publish_service import build_projected_payload, publish_projected_payload
 
-from datetime import datetime, timedelta, timezone
 from app.services.retry import compute_backoff_seconds
 
 
@@ -70,17 +72,17 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
 
 
     secrets = decrypt_json(cred.secret_ciphertext)
-    connector = get_connector(d.destination)
+    
+     # Build projected payload + current external_listing_id (if any)
+    projected_payload, external_listing_id = await build_projected_payload(db, delivery=d)
 
-    result = await connector.publish_listing(
-        listing={
-            "id": listing.id,
-            "payload": listing.payload,
-            "schema": listing.schema,
-            "external_listing_id": mapping.external_listing_id if mapping else None,
-        },
+    # Publish via destination connector
+    result = await publish_projected_payload(
+        destination=d.destination,
+        payload=projected_payload,
         credentials=secrets,
     )
+
 
     d.attempts += 1
     d.last_attempt_at = func.now()
@@ -88,10 +90,10 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
     db.add(DeliveryAttempt(
         delivery_id=d.id,
         status="success" if result.ok else "failed",
-        request={"listing_id": listing.id, "content_hash": listing.content_hash, "destination": d.destination},
+        request={"listing_id": listing.id, "content_hash": listing.content_hash, "destination": d.destination, "external_listing_id": external_listing_id,},
         response=result.detail or {},
-        error_code=result.error_code,
-        error_message=result.error_message,
+        error_code=getattr(result, "error_code", None),
+        error_message=getattr(result, "error_message", None),
     ))
 
     now = datetime.now(timezone.utc)
@@ -104,14 +106,15 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
                 agent_id=d.agent_id,
                 listing_id=listing.id,
                 destination=d.destination,
-                external_listing_id=result.external_id,
+                external_listing_id=getattr(result, "external_id", None) or external_listing_id,
                 last_synced_hash=listing.content_hash,
                 metadata={},
             )
             db.add(mapping)
         else:
-            if result.external_id:
-                mapping.external_listing_id = result.external_id
+            ext_id = getattr(result, "external_id", None)
+            if ext_id:
+                mapping.external_listing_id = ext_id
             mapping.last_synced_hash = listing.content_hash
 
         d.status = "success"
@@ -123,10 +126,11 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
     
     # Failure
     d.status = "failed"
-    d.last_error = result.error_message
-    d.status_detail = result.error_code
+    d.last_error = getattr(result, "error_message", None)
+    d.status_detail = getattr(result, "error_code", None)
 
-    if (not result.retryable) or (d.attempts >= MAX_DELIVERY_ATTEMPTS):
+    retryable = bool(getattr(result, "retryable", False))
+    if (not retryable) or (d.attempts >= MAX_DELIVERY_ATTEMPTS):
         d.status = "dead_lettered"
         d.dead_lettered_at = func.now()
         d.next_retry_at = None
