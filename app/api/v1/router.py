@@ -16,6 +16,7 @@ from app.api.v1.endpoints.partner_destinations import router as partner_dest_rou
 from app.api.v1.endpoints.feeds import router as feeds_router
 from app.api.v1.endpoints.public_feeds import router as public_feeds_router
 from app.api.v1.endpoints.mapping_validation import router as mapping_validation_router
+from app.api.v1.endpoints.geo_admin import router as geo_admin_router
 
 
 
@@ -36,3 +37,4 @@ router.include_router(partner_dest_router, tags=["partner-destinations"])
 router.include_router(feeds_router, tags=["feeds"])
 router.include_router(public_feeds_router, tags=["public-feeds"])
 router.include_router(mapping_validation_router, tags=["mapping-validation"])
+router.include_router(geo_admin_router, tags=["geo-admin"])
