@@ -47,16 +47,21 @@ def build_101evler_xml(
     for canonical, updated_at in listings:
         # Required-ish fields for any MLS: key, title, description, price, location, type
         property_type = getattr(canonical.property, "property_type", None) if canonical.property else None
-        city = (canonical.address.city or "").strip().lower() if canonical.address else ""
+
+        city_slug = (canonical.address.city or "").strip().lower() if canonical.address else ""
+        area_slug = (getattr(canonical.address, "area", None) or "").strip().lower() if canonical.address else ""
 
         type_id = type_map.get(property_type)
-        area_id = area_map.get(city)
+
+        # preferred lookup: "city_slug:area_slug" (if area_slug present), else city_slug
+        key = f"{city_slug}:{area_slug}" if area_slug else city_slug
+        area_id = area_map.get(key) or area_map.get(city_slug)
 
         if not type_id:
             warnings.append(FeedBuildWarning(canonical.canonical_id, "MISSING_TYPE_ID", f"No type_id_map for property_type={property_type}"))
             continue
         if not area_id:
-            warnings.append(FeedBuildWarning(canonical.canonical_id, "MISSING_AREA_ID", f"No area_id_map for city={city!r}"))
+            warnings.append(FeedBuildWarning(canonical.canonical_id, "MISSING_AREA_ID", f"No area_id_map for key={key!r} (city={city_slug!r}, area={area_slug!r})"))
             continue
         if not canonical.list_price:
             warnings.append(FeedBuildWarning(canonical.canonical_id, "MISSING_PRICE", "Listing missing list_price"))
