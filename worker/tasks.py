@@ -11,6 +11,8 @@ from app.models.listing import Listing
 from app.models.agent import Agent
 from app.models.delivery import Delivery
 
+from app.services.destinations import get_enabled_destinations_for_partner
+
 
 async def _process_outbox_event(outbox_id: str, lease_id: str) -> None:
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
@@ -33,10 +35,17 @@ async def _process_outbox_event(outbox_id: str, lease_id: str) -> None:
                 listing_id = ev.payload["listing_id"]
                 listing = (await db.execute(select(Listing).where(Listing.id == listing_id))).scalar_one()
 
-                agent = (await db.execute(select(Agent).where(Agent.id == listing.agent_id))).scalar_one()
-                allowed = agent.rules.get("allowed_destinations", [])
+                enabled = await get_enabled_destinations_for_partner(
+                    db,
+                    tenant_id=listing.tenant_id,
+                    partner_id=listing.partner_id,
+                )
 
-                for destination in allowed:
+                agent = (await db.execute(select(Agent).where(Agent.id == listing.agent_id))).scalar_one()
+                allowed = set(agent.rules.get("allowed_destinations", []))
+                targets = sorted(allowed & enabled)
+
+                for destination in targets:
                     d = (await db.execute(
                         select(Delivery).where(
                             Delivery.tenant_id == listing.tenant_id,
