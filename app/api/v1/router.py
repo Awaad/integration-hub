@@ -19,6 +19,7 @@ from app.api.v1.endpoints.mapping_validation import router as mapping_validation
 from app.api.v1.endpoints.geo_admin import router as geo_admin_router
 from app.api.v1.endpoints.mapping_diff import router as mapping_diff_router
 from app.api.v1.endpoints.mapping_admin_imports import router as mapping_admin_imports_router
+from app.api.v1.endpoints.feed_urls import router as feed_urls_router
 
 
 
@@ -42,3 +43,4 @@ router.include_router(mapping_validation_router, tags=["mapping-validation"])
 router.include_router(geo_admin_router, tags=["geo-admin"])
 router.include_router(mapping_diff_router, tags=["mapping-diff"])
 router.include_router(mapping_admin_imports_router, tags=["mapping-admin-imports"])
+router.include_router(feed_urls_router, tags=["feed-urls"])
