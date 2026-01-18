@@ -15,8 +15,11 @@ from app.models.geo_country import GeoCountry
 from app.models.geo_city import GeoCity
 from app.models.geo_area import GeoArea
 from app.models.destination_geo_mapping import DestinationGeoMapping
+from app.destinations.mapping_registry import get_mapping_plugin
+from app.destinations.mapping_base import MappingKeySet
 
 router = APIRouter()
+
 
 def _slug(s: str) -> str:
     return (s or "").strip().lower().replace(" ", "-")
@@ -56,78 +59,26 @@ async def mapping_diff(
 
     exportable = 0
 
-    # Preload NCY country if needed
-    country = None
-    if dest == "101evler":
-        country = (await db.execute(select(GeoCountry).where(GeoCountry.code == "NCY"))).scalar_one_or_none()
+    plugin = get_mapping_plugin(dest)
+
+    agg_enum: dict[str, set[str]] = {}
+    agg_geo: set[str] = set()
+    
 
     for r in rows:
         can = ListingCanonicalV1.model_validate(r.payload)
+        ks = plugin.required_mapping_keys(can)
+        for ns, skeys in ks.enum_keys.items():
+            agg_enum.setdefault(ns, set()).update(skeys)
+        agg_geo |= set(ks.geo_keys)
 
-        ok = True
-
-        if dest == "101evler":
-            prop_type = getattr(can.property, "property_type", None) if can.property else None
-            if prop_type:
-                v = await resolve_dest_enum(db, destination=dest, namespace="property_type", source_key=str(prop_type))
-                if not v:
-                    missing_property_types.add(str(prop_type))
-                    ok = False
-            else:
-                missing_property_types.add("<missing>")
-                ok = False
-
-            if can.list_price:
-                cur = can.list_price.currency
-                v = await resolve_dest_enum(db, destination=dest, namespace="currency", source_key=str(cur))
-                if not v:
-                    missing_currencies.add(str(cur))
-                    ok = False
-            else:
-                missing_currencies.add("<missing_price>")
-                ok = False
-
-            # geo mapping: city/area slugs
-            city_slug = _slug(can.address.city) if can.address else ""
-            area_slug = _slug(getattr(can.address, "area", None) or "") if can.address else ""
-            if not city_slug or not area_slug or not country:
-                missing_geo.add(f"{city_slug}:{area_slug}")
-                ok = False
-            else:
-                city = (await db.execute(select(GeoCity).where(
-                    GeoCity.country_id == country.id,
-                    GeoCity.slug == city_slug,
-                ))).scalar_one_or_none()
-                if not city:
-                    missing_geo.add(f"{city_slug}:{area_slug}")
-                    ok = False
-                else:
-                    area = (await db.execute(select(GeoArea).where(
-                        GeoArea.city_id == city.id,
-                        GeoArea.slug == area_slug,
-                    ))).scalar_one_or_none()
-                    if not area:
-                        missing_geo.add(f"{city_slug}:{area_slug}")
-                        ok = False
-                    else:
-                        m = (await db.execute(select(DestinationGeoMapping).where(
-                            DestinationGeoMapping.destination == dest,
-                            DestinationGeoMapping.geo_area_id == area.id,
-                        ))).scalar_one_or_none()
-                        if not m or not m.destination_area_id:
-                            missing_geo.add(f"{city_slug}:{area_slug}")
-                            ok = False
-
-        if ok:
-            exportable += 1
-
+    check = await plugin.check_mappings(db=db, tenant_id=actor.tenant_id, partner_id=partner_id, keys=MappingKeySet(agg_enum, agg_geo))
     return {
-        "destination": dest,
-        "checked": len(rows),
-        "exportable": exportable,
-        "missing": {
-            "property_types": sorted(missing_property_types),
-            "currencies": sorted(missing_currencies),
-            "geo_city_area": sorted(missing_geo),
-        }
+    "destination": dest,
+    "checked": len(rows),
+    "missing": {
+        "enums": {ns: sorted(list(v)) for ns, v in check.missing.enum_keys.items()},
+        "geo": sorted(list(check.missing.geo_keys)),
+    },
+    "warnings": check.warnings,
     }
