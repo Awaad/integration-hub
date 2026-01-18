@@ -11,7 +11,8 @@ from app.models.feed_snapshot import FeedSnapshot
 from app.services.feed_generator import generate_xml_feed
 from app.services.storage import LocalObjectStore
 from app.models.partner_destination_setting import PartnerDestinationSetting
-from app.services.feeds.evler101_xml import build_101evler_xml
+from app.models.destination_enum_mapping import DestinationEnumMapping
+from app.services.feeds.evler101_xml import build_101evler_xml, Evler101FeedItem, FeedBuildWarning
 
 from app.models.geo_country import GeoCountry
 from app.models.geo_city import GeoCity
@@ -46,6 +47,27 @@ def _city_area_slug_from_listing(can: ListingCanonicalV1) -> tuple[str, str] | N
     if not city_slug or not area_slug:
         return None
     return city_slug, area_slug
+
+
+async def _load_destination_enum_map(
+    db: AsyncSession,
+    *,
+    destination: str,
+    namespace: str,
+) -> dict[str, str]:
+    """
+    Load all enum mappings for a destination+namespace into a dict:
+      source_key -> destination_value
+    """
+    rows = (
+        await db.execute(
+            select(DestinationEnumMapping.source_key, DestinationEnumMapping.destination_value).where(
+                DestinationEnumMapping.destination == destination,
+                DestinationEnumMapping.namespace == namespace,
+            )
+        )
+    ).all()
+    return {k: v for (k, v) in rows if k is not None and v is not None}
 
 
 async def _build_dynamic_area_id_map_for_101evler(
@@ -149,6 +171,8 @@ async def build_partner_feed_snapshot(
     store: LocalObjectStore,
 ) -> FeedSnapshot:
     
+    destination = destination.lower().strip()
+
     setting = (await db.execute(select(PartnerDestinationSetting).where(
         PartnerDestinationSetting.tenant_id == tenant_id,
         PartnerDestinationSetting.partner_id == partner_id,
@@ -186,8 +210,94 @@ async def build_partner_feed_snapshot(
         for k, v in dynamic_map.items():
             area_id_map.setdefault(k, v)
 
+        # Enum mappings from DB (DB wins, config is fallback) ---
+        db_type_map = await _load_destination_enum_map(db, destination="101evler", namespace="property_type")
+        db_currency_map = await _load_destination_enum_map(db, destination="101evler", namespace="currency")
+        db_rooms_map = await _load_destination_enum_map(db, destination="101evler", namespace="rooms")
+
+        type_id_map = dict(cfg.get("type_id_map") or {})
+        type_id_map.update(db_type_map)  
+
+        currency_id_map = dict(cfg.get("currency_id_map") or {})
+        currency_id_map.update(db_currency_map)  
+
+        # keep name explicit; builder can ignore if not implemented yet
+        room_count_id_map = dict(cfg.get("room_count_id_map") or {})
+        room_count_id_map.update(db_rooms_map)  
+
+        # Resolve per-listing IDs (builder stays pure)
+        warnings: list[FeedBuildWarning] = []
+        items: list[Evler101FeedItem] = []
+
+        for can, listing_hash, updated_at in canonicals_with_meta:
+            prop_type = getattr(can.property, "property_type", None) if can.property else None
+            type_id = type_id_map.get(prop_type)
+
+            city_slug = (can.address.city or "").strip().lower() if can.address else ""
+            area_slug = (getattr(can.address, "area", None) or "").strip().lower() if can.address else ""
+            area_key = f"{city_slug}:{area_slug}" if area_slug else city_slug
+            area_id = area_id_map.get(area_key) or area_id_map.get(city_slug)
+
+            if not can.list_price:
+                warnings.append(FeedBuildWarning(can.canonical_id, "MISSING_PRICE", "Listing missing list_price"))
+                continue
+
+            currency_id = currency_id_map.get(can.list_price.currency)
+
+            # rooms mapping (choose your canonical source)
+            rooms_val = None
+            if can.property and getattr(can.property, "bedrooms", None) is not None:
+                rooms_val = str(can.property.bedrooms)
+            room_count_id = room_count_id_map.get(rooms_val) if rooms_val else None
+
+            if not type_id:
+                warnings.append(
+                    FeedBuildWarning(can.canonical_id, "MISSING_TYPE_ID", f"No type_id for property_type={prop_type}")
+                )
+                continue
+            if not area_id:
+                warnings.append(
+                    FeedBuildWarning(
+                        can.canonical_id,
+                        "MISSING_AREA_ID",
+                        f"No area_id for key={area_key!r} (city={city_slug!r}, area={area_slug!r})",
+                    )
+                )
+                continue
+            if not currency_id:
+                warnings.append(
+                    FeedBuildWarning(
+                        can.canonical_id,
+                        "MISSING_CURRENCY_ID",
+                        f"No currency_id for currency={can.list_price.currency}",
+                    )
+                )
+                continue
+
+            items.append(
+                Evler101FeedItem(
+                    canonical=can,
+                    updated_at=updated_at,
+                    type_id=str(type_id),
+                    area_id=str(area_id),
+                    currency_id=str(currency_id),
+                    room_count_id=str(room_count_id) if room_count_id is not None else None,
+                )
+            )
+
+        xml_bytes, builder_warnings, count = build_101evler_xml(items=items)
+        # Merge warnings: mapping warnings + builder warnings (builder is mostly safety)
+        warnings.extend(builder_warnings)
+
+        feed_format = "xml"
+        meta = {"generator": "101evler_xml_v1", "warnings": [w.__dict__ for w in warnings]}
+
+        # Update cfg so hash includes the effective maps
         cfg = dict(cfg)
         cfg["area_id_map"] = area_id_map
+        cfg["type_id_map"] = type_id_map
+        cfg["currency_id_map"] = currency_id_map
+        cfg["room_count_id_map"] = room_count_id_map
 
         xml_bytes, warnings, count = build_101evler_xml(listings=pairs, config=cfg)
         feed_format = "xml"
@@ -198,12 +308,21 @@ async def build_partner_feed_snapshot(
         feed_format = "xml"
         meta = {"generator": "xml_v1"}
 
-        # Semantic content hash (stable across XML formatting changes)
+    # Semantic content hash (stable across XML formatting changes)
+    # Include only config that affects output; never include feed_token or secrets.
+    config_fingerprint = {}
+    if destination == "101evler":
+        config_fingerprint = {
+            "area_id_map": cfg.get("area_id_map", {}),
+            "type_id_map": cfg.get("type_id_map", {}),
+            "currency_id_map": cfg.get("currency_id_map", {}),
+            "room_count_id_map": cfg.get("room_count_id_map", {}),
+        }
+
     hash_payload: dict[str, Any] = {
         "destination": destination,
         "format": feed_format,
-        # include only config that affects output (avoid secrets like feed_token)
-        "config": {"area_id_map": cfg.get("area_id_map", {})} if destination == "101evler" else {},
+        "config": config_fingerprint,
         "listings": [
             {"canonical_id": can.canonical_id, "content_hash": listing_hash}
             for (can, listing_hash, _updated_at) in canonicals_with_meta
