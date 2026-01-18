@@ -7,7 +7,7 @@ from app.models.delivery import Delivery
 from app.models.listing import Listing
 from app.models.agent_external_identity import AgentExternalIdentity
 from app.models.listing_external_mapping import ListingExternalMapping
-from app.destinations.connector_registry import get_destination_connector
+from app.destinations.registry import get_destination_connector
 from app.projections.registry import get_projector
 from app.projections.base import ProjectionContext
 

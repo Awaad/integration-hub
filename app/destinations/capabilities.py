@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 Transport = Literal["push_api", "hosted_feed", "pull_only"]
@@ -19,6 +19,8 @@ class DestinationCapabilities:
     supports_upsert: bool = True
     supports_delete: bool = False
     supports_media: bool = True
+
+    features: dict[str, bool] = field(default_factory=dict)
 
     # operational hints
     max_requests_per_minute: int | None = None

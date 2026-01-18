@@ -7,7 +7,7 @@ from app.core.db import get_db
 from app.models.partner_destination_setting import PartnerDestinationSetting
 from app.schemas.partner_destination import PartnerDestinationUpsert, PartnerDestinationOut
 from app.services.auth import Actor, require_partner_admin
-from app.destinations.connector_registry import supported_destinations
+from app.destinations.registry import supported_destinations
 from app.services.redaction import redact_payload
 
 

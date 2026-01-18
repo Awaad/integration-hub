@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.destinations.capabilities import DestinationCapabilities
-from app.destinations.registry import DestinationConnector, PublishResult
+from app.destinations.base import DestinationConnector, PublishResult
 
 
 class Evler101HostedFeedConnector(DestinationConnector):
@@ -23,7 +23,7 @@ class Evler101HostedFeedConnector(DestinationConnector):
             transport="hosted_feed",
             supports_delete=False,      # not specified yet
             supports_media=True,        # feed supports <ad_pictures> :contentReference[oaicite:7]{index=7}
-            supports_timed_offers=False # not specified yet
+            features={"timed_offers": False}
         )
 
     async def publish_listing(self, *, payload: dict, credentials: dict) -> PublishResult:

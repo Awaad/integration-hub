@@ -1,53 +1,23 @@
 from __future__ import annotations
+from typing import Dict
 
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
-
-from app.destinations.capabilities import DestinationCapabilities
-
-
-@dataclass(frozen=True)
-class PublishResult:
-    ok: bool
-    retryable: bool = False
-    error_code: str | None = None
-    error_message: str | None = None
-    detail: dict[str, Any] | None = None
-    external_id: str | None = None  # destination listing id, if returned
+from app.destinations.base import DestinationConnector
+from app.destinations.sample_passthrough_connector import PassthroughDestinationConnector
+from app.destinations.evler101.connector import Evler101HostedFeedConnector
 
 
-@runtime_checkable
-class DestinationConnector(Protocol):
-    """
-    A connector handles transport & auth for a destination.
-    It receives destination-specific payload (already projected).
-    """
+_DESTINATIONS: dict[str, DestinationConnector] = {}
 
-    destination: str
+def register(connector: DestinationConnector) -> None:
+    _DESTINATIONS[connector.destination.lower().strip()] = connector
 
-    def capabilities(self) -> DestinationCapabilities:
-        ...
 
-    async def publish_listing(
-        self,
-        *,
-        payload: dict[str, Any],
-        credentials: dict[str, Any],
-    ) -> PublishResult:
-        """
-        Push API transport: do an upsert via HTTP.
-        Hosted feed transport: feed builder runs elsewhere.
-        Pull-only: may return ok=False with retryable=False.
-        """
-        ...
+def get_destination_connector(destination: str) -> DestinationConnector:
+    key = destination.lower().strip()
+    if key not in _DESTINATIONS:
+        raise KeyError(f"No destination connector registered for destination={destination}")
+    return _DESTINATIONS[key]
 
-    async def delete_listing(
-        self,
-        *,
-        external_listing_id: str,
-        credentials: dict[str, Any],
-    ) -> PublishResult:
-        """
-        Only if supports_delete.
-        """
-        ...
+
+def supported_destinations() -> list[str]:
+    return sorted(_DESTINATIONS.keys())

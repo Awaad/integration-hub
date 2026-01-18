@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.destinations.capabilities import DestinationCapabilities
-from app.destinations.registry import DestinationConnector, PublishResult
+from app.destinations.base import DestinationConnector, PublishResult
 
 
 class PassthroughDestinationConnector:

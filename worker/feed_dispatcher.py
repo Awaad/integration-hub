@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from app.destinations.connector_registry import get_destination_connector
+from app.destinations.registry import get_destination_connector
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
