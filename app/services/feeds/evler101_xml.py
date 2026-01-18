@@ -38,11 +38,9 @@ def build_101evler_xml(
     items: Iterable[Evler101FeedItem],
 ) -> tuple[bytes, list[FeedBuildWarning], int]:
     """
-    items: Evler101FeedItem objects.
-    config mappings expected:
-      - type_id_map: { "apartment": 1, "villa": 2, ... }
-      - area_id_map: { "nicosia": 10, ... }  
-      - currency_id_map: { "EUR": 601, "GBP": 602, ... }  (per destination)
+    Build 101evler XML feed from pre-resolved items.
+    All destination-specific IDs (type_id, area_id, currency_id, etc.) must be resolved
+    before calling this function.
     """
     warnings: list[FeedBuildWarning] = []
     root = Element("ads")

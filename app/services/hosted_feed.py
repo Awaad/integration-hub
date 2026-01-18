@@ -11,13 +11,13 @@ from app.models.feed_snapshot import FeedSnapshot
 from app.services.feed_generator import generate_xml_feed
 from app.services.storage import LocalObjectStore
 from app.models.partner_destination_setting import PartnerDestinationSetting
-from app.models.destination_enum_mapping import DestinationEnumMapping
 from app.services.feeds.evler101_xml import build_101evler_xml, Evler101FeedItem, FeedBuildWarning
 
 from app.models.geo_country import GeoCountry
 from app.models.geo_city import GeoCity
 from app.models.geo_area import GeoArea
 from app.models.destination_geo_mapping import DestinationGeoMapping
+from app.services.destination_mapping import load_dest_enum_maps
 
 
 
@@ -47,27 +47,6 @@ def _city_area_slug_from_listing(can: ListingCanonicalV1) -> tuple[str, str] | N
     if not city_slug or not area_slug:
         return None
     return city_slug, area_slug
-
-
-async def _load_destination_enum_map(
-    db: AsyncSession,
-    *,
-    destination: str,
-    namespace: str,
-) -> dict[str, str]:
-    """
-    Load all enum mappings for a destination+namespace into a dict:
-      source_key -> destination_value
-    """
-    rows = (
-        await db.execute(
-            select(DestinationEnumMapping.source_key, DestinationEnumMapping.destination_value).where(
-                DestinationEnumMapping.destination == destination,
-                DestinationEnumMapping.namespace == namespace,
-            )
-        )
-    ).all()
-    return {k: v for (k, v) in rows if k is not None and v is not None}
 
 
 async def _build_dynamic_area_id_map_for_101evler(
@@ -197,7 +176,7 @@ async def build_partner_feed_snapshot(
     ]
 
     # For feed generator APIs that expect (canonical, updated_at)
-    pairs = [(can, updated_at) for (can, _hash, updated_at) in canonicals_with_meta]
+    
     canonicals = [can for (can, _hash, _updated_at) in canonicals_with_meta]
 
     # destination-specific config enrichment
@@ -211,9 +190,14 @@ async def build_partner_feed_snapshot(
             area_id_map.setdefault(k, v)
 
         # Enum mappings from DB (DB wins, config is fallback) ---
-        db_type_map = await _load_destination_enum_map(db, destination="101evler", namespace="property_type")
-        db_currency_map = await _load_destination_enum_map(db, destination="101evler", namespace="currency")
-        db_rooms_map = await _load_destination_enum_map(db, destination="101evler", namespace="rooms")
+        enum_maps = await load_dest_enum_maps(
+            db,
+            destination="101evler",
+            namespaces=["property_type", "currency", "rooms"],
+        )
+        db_type_map = enum_maps.get("property_type", {})
+        db_currency_map = enum_maps.get("currency", {})
+        db_rooms_map = enum_maps.get("rooms", {})
 
         type_id_map = dict(cfg.get("type_id_map") or {})
         type_id_map.update(db_type_map)  
@@ -228,13 +212,14 @@ async def build_partner_feed_snapshot(
         # Resolve per-listing IDs (builder stays pure)
         warnings: list[FeedBuildWarning] = []
         items: list[Evler101FeedItem] = []
+        exported_listing_hashes: dict[str, str] = {}
 
         for can, listing_hash, updated_at in canonicals_with_meta:
             prop_type = getattr(can.property, "property_type", None) if can.property else None
             type_id = type_id_map.get(prop_type)
 
-            city_slug = (can.address.city or "").strip().lower() if can.address else ""
-            area_slug = (getattr(can.address, "area", None) or "").strip().lower() if can.address else ""
+            city_slug = _slug(can.address.city or "") if can.address else ""
+            area_slug = _slug(getattr(can.address, "area", None) or "") if can.address else ""
             area_key = f"{city_slug}:{area_slug}" if area_slug else city_slug
             area_id = area_id_map.get(area_key) or area_id_map.get(city_slug)
 
@@ -285,6 +270,8 @@ async def build_partner_feed_snapshot(
                 )
             )
 
+            exported_listing_hashes[can.canonical_id] = listing_hash
+
         xml_bytes, builder_warnings, count = build_101evler_xml(items=items)
         # Merge warnings: mapping warnings + builder warnings (builder is mostly safety)
         warnings.extend(builder_warnings)
@@ -293,36 +280,32 @@ async def build_partner_feed_snapshot(
         meta = {"generator": "101evler_xml_v1", "warnings": [w.__dict__ for w in warnings]}
 
         # Update cfg so hash includes the effective maps
-        cfg = dict(cfg)
+        cfg_effective = dict(cfg_effective)
         cfg["area_id_map"] = area_id_map
         cfg["type_id_map"] = type_id_map
         cfg["currency_id_map"] = currency_id_map
         cfg["room_count_id_map"] = room_count_id_map
 
-        xml_bytes, warnings, count = build_101evler_xml(listings=pairs, config=cfg)
-        feed_format = "xml"
-        meta = {"generator": "101evler_xml_v1", "warnings": [w.__dict__ for w in warnings]}
+        hash_payload: dict[str, Any] = {
+            "destination": destination,
+            "format": feed_format,
+            "config": cfg_effective,
+            "listings": [{"canonical_id": cid, "content_hash": h} for cid, h in exported_listing_hashes.items()],
+        }
+        hash_payload["listings"].sort(key=lambda x: x["canonical_id"])
+        content_hash = _sha256_hex(_stable_json(hash_payload))
+
     else:
         xml_bytes, _, count = generate_xml_feed(canonicals)
         warnings = []
         feed_format = "xml"
         meta = {"generator": "xml_v1"}
 
-    # Semantic content hash (stable across XML formatting changes)
-    # Include only config that affects output; never include feed_token or secrets.
-    config_fingerprint = {}
-    if destination == "101evler":
-        config_fingerprint = {
-            "area_id_map": cfg.get("area_id_map", {}),
-            "type_id_map": cfg.get("type_id_map", {}),
-            "currency_id_map": cfg.get("currency_id_map", {}),
-            "room_count_id_map": cfg.get("room_count_id_map", {}),
-        }
 
     hash_payload: dict[str, Any] = {
         "destination": destination,
         "format": feed_format,
-        "config": config_fingerprint,
+        "config": {},
         "listings": [
             {"canonical_id": can.canonical_id, "content_hash": listing_hash}
             for (can, listing_hash, _updated_at) in canonicals_with_meta
