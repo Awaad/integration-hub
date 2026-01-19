@@ -2,8 +2,6 @@ from __future__ import annotations
 from typing import Dict
 
 from app.destinations.base import DestinationConnector
-from app.destinations.sample_passthrough_connector import PassthroughDestinationConnector
-from app.destinations.evler101.connector import Evler101HostedFeedConnector
 
 
 _DESTINATIONS: dict[str, DestinationConnector] = {}
