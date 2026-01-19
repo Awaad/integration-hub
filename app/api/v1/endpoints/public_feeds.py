@@ -84,14 +84,6 @@ async def get_public_feed_xml(
     if not snap:
         raise HTTPException(status_code=404, detail="No snapshot available")
 
-    # storage_uri is currently file://...
-    parsed = urlparse(snap.storage_uri)
-    if parsed.scheme != "file":
-        raise HTTPException(status_code=501, detail="Non-file storage not supported yet")
-
-    path = Path(parsed.path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Snapshot file missing")
 
     etag = _etag_value(snap.content_hash)
     last_modified = _http_date(snap.created_at)
@@ -110,25 +102,26 @@ async def get_public_feed_xml(
     accept_encoding = (request.headers.get("accept-encoding") or "").lower()
     wants_gzip = "gzip" in accept_encoding
 
-    if wants_gzip:
-        gz_path = Path(str(path) + ".gz")
+    chosen_uri = snap.storage_uri
+    content_encoding = None
 
-        # Prefer precompressed file if it exists
-        if gz_path.exists():
-            headers = dict(common_headers)
-            headers["Content-Encoding"] = "gzip"
-            return FileResponse(gz_path, media_type="application/xml", headers=headers)
+    if wants_gzip and snap.gzip_storage_uri:
+        chosen_uri = snap.gzip_storage_uri
+        content_encoding = "gzip"
+    
 
-        # Otherwise gzip on the fly (in-memory) later we will save precompressed versions then serve
-        raw = path.read_bytes()
-        gz_bytes = gzip.compress(raw, compresslevel=6)
+    # storage_uri is currently file://...
+    parsed = urlparse(chosen_uri)
+    if parsed.scheme != "file":
+        raise HTTPException(status_code=501, detail="Non-file storage not supported yet")
 
-        headers = dict(common_headers)
-        headers["Content-Encoding"] = "gzip"
-        # often helpful:
-        headers["Content-Length"] = str(len(gz_bytes))
-
-        return Response(content=gz_bytes, media_type="application/xml", headers=headers)
+    path = Path(parsed.path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Snapshot file missing")
+    
+    headers = dict(common_headers)
+    if content_encoding:
+        headers["Content-Encoding"] = content_encoding
 
     # Normal (uncompressed)
-    return FileResponse(path, media_type="application/xml")
+    return FileResponse(path, media_type="application/xml", headers=headers)

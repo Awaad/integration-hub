@@ -9,6 +9,7 @@ from app.services.storage import LocalObjectStore
 from app.models.partner_destination_setting import PartnerDestinationSetting
 from app.services.feed_fingerprint import compute_feed_fingerprint
 from app.destinations.feeds.registry import get_feed_plugin
+from app.services.gzip_util import gzip_bytes
 
 
 def _clean_config_for_fingerprint(cfg: dict) -> dict:
@@ -88,10 +89,18 @@ async def build_partner_feed_snapshot(
     key = f"{tenant_id}/{partner_id}/{dest}/feed.{out.format}"
     uri = store.put_bytes(key=key, data=out.bytes)
 
+    gz_key = f"{tenant_id}/{partner_id}/{dest}/feed.{out.format}.gz"
+    gz_data = gzip_bytes(out.bytes)
+    gz_uri = store.put_bytes(key=gz_key, data=gz_data)
+
+    snap.gzip_storage_uri = gz_uri
+    snap.gzip_size_bytes = len(gz_data)
+
     meta = dict(out.meta or {})
     meta["fingerprint"] = fingerprint
     meta["built_at"] = datetime.now(timezone.utc).isoformat()
     meta["listing_count"] = out.listing_count
+    meta["gzip_available"] = True
     
     snap = FeedSnapshot(
         tenant_id=tenant_id,

@@ -1,5 +1,5 @@
 from app.core.ids import gen_id
-from sqlalchemy import String, ForeignKey
+from sqlalchemy import String, ForeignKey, Text, Integer
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -31,5 +31,9 @@ class FeedSnapshot(AuditMixin, Base):
 
     # extra metadata (generator version, warnings, etc.)
     meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+    # gzip 
+    gzip_storage_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gzip_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
