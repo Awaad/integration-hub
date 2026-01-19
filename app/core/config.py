@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     env: str = "dev"
     service_name: str = "hub-api"
 
+    public_base_url: str = "PUBLIC_BASE_URL" or "http://localhost:8000"
+
     # Database
     database_url: str = "postgresql+asyncpg://hub:hub@localhost:5432/hub"
 
@@ -33,7 +35,7 @@ class Settings(BaseSettings):
 
     # Storage local object store dir
     
-    FEED_STORAGE_DIR: str = "./var/feeds"
+    feed_storage_dir: str = "./var/feeds"
 
 
 settings = Settings()

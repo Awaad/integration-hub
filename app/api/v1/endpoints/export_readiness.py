@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.core.config import settings
 from app.core.db import get_db
 from app.services.auth import Actor, require_partner_admin
 from app.models.partner_destination_setting import PartnerDestinationSetting
@@ -69,7 +69,7 @@ async def export_readiness(
         token = await ensure_feed_token(db, tenant_id=actor.tenant_id, partner_id=partner_id, destination=dest)
         # commit not required here; but safe if ensure_feed_token mutated config
         await db.commit()
-        feed_url = f"/v1/feeds/{partner_id}/{dest}.xml?token={token}"
+        feed_url = f"{settings.public_base_url}/v1/feeds/{partner_id}/{dest}.xml?token={token}"
 
     # Mapping diff via plugin (if plugin exists)
     missing = {"enums": {}, "geo": []}

@@ -5,11 +5,13 @@ from email.utils import format_datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from app.services.storage import LocalObjectStore
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse, Response
 
+from app.core.config import settings
 from app.core.db import get_db
 from app.models.partner_destination_setting import PartnerDestinationSetting
 from app.models.feed_snapshot import FeedSnapshot
@@ -48,6 +50,74 @@ def _if_none_match_matches(if_none_match: str | None, etag: str) -> bool:
             return True
     return False
 
+async def _resolve_snapshot_and_headers(
+    *,
+    db: AsyncSession,
+    store: LocalObjectStore,
+    partner_id: str,
+    destination: str,
+    token: str,
+    request: Request,
+):
+    dest = destination.lower().strip()
+
+    setting = (
+        await db.execute(
+            select(PartnerDestinationSetting).where(
+                PartnerDestinationSetting.partner_id == partner_id,
+                PartnerDestinationSetting.destination == dest,
+                PartnerDestinationSetting.is_enabled.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+
+    if not setting:
+        raise HTTPException(status_code=404, detail="Feed not enabled")
+
+    cfg = setting.config or {}
+    if cfg.get("feed_token") != token:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
+    snap = (
+        await db.execute(
+            select(FeedSnapshot).where(
+                FeedSnapshot.partner_id == partner_id,
+                FeedSnapshot.destination == dest,
+            ).order_by(desc(FeedSnapshot.created_at)).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if not snap:
+        raise HTTPException(status_code=404, detail="No snapshot available")
+
+    etag = _etag_value(snap.content_hash)
+    last_modified = _http_date(snap.created_at)
+
+    headers = {
+        "ETag": etag,
+        "Cache-Control": f"public, max-age={CACHE_MAX_AGE_SECONDS}",
+        "Last-Modified": last_modified,
+        "Vary": "Accept-Encoding",
+    }
+
+    accept_encoding = (request.headers.get("accept-encoding") or "").lower()
+    wants_gzip = "gzip" in accept_encoding
+
+    chosen_uri = snap.storage_uri
+    if wants_gzip and snap.gzip_storage_uri:
+        chosen_uri = snap.gzip_storage_uri
+        headers["Content-Encoding"] = "gzip"
+
+    try:
+        path = store.resolve_path(chosen_uri)
+    except ValueError:
+        raise HTTPException(status_code=501, detail="Non-file storage not supported yet")
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Snapshot file missing")
+
+    return path, headers
+
 
 @router.get("/feeds/{partner_id}/{destination}.xml")
 async def get_public_feed_xml(
@@ -57,71 +127,43 @@ async def get_public_feed_xml(
     token: str = Query(..., min_length=10),
     db: AsyncSession = Depends(get_db),
 ):
-    dest = destination.lower().strip()
+    store = LocalObjectStore(settings.feed_storage_dir)
 
-    setting = (await db.execute(
-        select(PartnerDestinationSetting).where(
-            PartnerDestinationSetting.partner_id == partner_id,
-            PartnerDestinationSetting.destination == dest,
-            PartnerDestinationSetting.is_enabled.is_(True),
-        )
-    )).scalar_one_or_none()
+    path, headers = await _resolve_snapshot_and_headers(
+        db=db,
+        store=store,
+        partner_id=partner_id,
+        destination=destination,
+        token=token,
+        request=request,
+    )
 
-    if not setting:
-        raise HTTPException(status_code=404, detail="Feed not enabled")
+    if _if_none_match_matches(request.headers.get("if-none-match"), headers["ETag"]):
+        return Response(status_code=304, headers=headers)
 
-    cfg = setting.config or {}
-    if cfg.get("feed_token") != token:
-        raise HTTPException(status_code=403, detail="Invalid token")
-
-    snap = (await db.execute(
-        select(FeedSnapshot).where(
-            FeedSnapshot.partner_id == partner_id,
-            FeedSnapshot.destination == dest,
-        ).order_by(desc(FeedSnapshot.created_at)).limit(1)
-    )).scalar_one_or_none()
-
-    if not snap:
-        raise HTTPException(status_code=404, detail="No snapshot available")
-
-
-    etag = _etag_value(snap.content_hash)
-    last_modified = _http_date(snap.created_at)
-
-    common_headers = {
-        "ETag": etag,
-        "Cache-Control": f"public, max-age={CACHE_MAX_AGE_SECONDS}",
-        "Last-Modified": last_modified,
-        "Vary": "Accept-Encoding",
-    }
-
-    # Conditional request
-    if _if_none_match_matches(request.headers.get("if-none-match"), etag):
-        return Response(status_code=304, headers=common_headers)
-
-    accept_encoding = (request.headers.get("accept-encoding") or "").lower()
-    wants_gzip = "gzip" in accept_encoding
-
-    chosen_uri = snap.storage_uri
-    content_encoding = None
-
-    if wants_gzip and snap.gzip_storage_uri:
-        chosen_uri = snap.gzip_storage_uri
-        content_encoding = "gzip"
-    
-
-    # storage_uri is currently file://...
-    parsed = urlparse(chosen_uri)
-    if parsed.scheme != "file":
-        raise HTTPException(status_code=501, detail="Non-file storage not supported yet")
-
-    path = Path(parsed.path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Snapshot file missing")
-    
-    headers = dict(common_headers)
-    if content_encoding:
-        headers["Content-Encoding"] = content_encoding
-
-    # Normal (uncompressed)
     return FileResponse(path, media_type="application/xml", headers=headers)
+
+
+@router.head("/feeds/{partner_id}/{destination}.xml")
+async def head_public_feed_xml(
+    partner_id: str,
+    destination: str,
+    request: Request,
+    token: str = Query(..., min_length=10),
+    db: AsyncSession = Depends(get_db),
+):
+    store = LocalObjectStore(settings.feed_storage_dir)
+
+    _path, headers = await _resolve_snapshot_and_headers(
+        db=db,
+        store=store,
+        partner_id=partner_id,
+        destination=destination,
+        token=token,
+        request=request,
+    )
+
+    if _if_none_match_matches(request.headers.get("if-none-match"), headers["ETag"]):
+        return Response(status_code=304, headers=headers)
+
+    return Response(status_code=200, headers=headers)

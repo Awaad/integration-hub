@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import secrets
-
+from app.core.config import settings
 from app.core.db import get_db
 from app.models.partner_destination_setting import PartnerDestinationSetting
 from app.services.auth import Actor, require_partner_admin
@@ -37,7 +37,7 @@ async def get_feed_url(
     # For now we return a relative URL; in prod we will use settings.base_url
     return {
         "destination": dest,
-        "feed_url": f"/v1/feeds/{partner_id}/{dest}.xml?token={token}",
+        "feed_url": f"{settings.public_base_url}/v1/feeds/{partner_id}/{dest}.xml?token={token}",
     }
 
 @router.post("/partners/{partner_id}/destinations/{destination}/feed-token:rotate")
@@ -68,5 +68,5 @@ async def rotate_feed_token(
 
     return {
         "destination": dest,
-        "feed_url": f"/v1/feeds/{partner_id}/{dest}.xml?token={cfg['feed_token']}",
+        "feed_url": f"{settings.public_base_url}/v1/feeds/{partner_id}/{dest}.xml?token={cfg['feed_token']}",
     }
