@@ -1,10 +1,11 @@
 import asyncio
 import logging
 from app.destinations.registry import get_destination_connector
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.core.config import settings
+from app.models.feed_snapshot import FeedSnapshot
 from app.models.partner_destination_setting import PartnerDestinationSetting
 from app.services.hosted_feed import build_partner_feed_snapshot
 from app.services.storage import LocalObjectStore
@@ -29,6 +30,8 @@ async def _tick():
         )).scalars().all()
 
         built = 0
+        skipped = 0
+
         for s in rows:
             # only handle hosted_feed destinations (we’ll check via registry later)
             try:
@@ -49,19 +52,34 @@ async def _tick():
                 destination=s.destination,
             )
 
-            await build_partner_feed_snapshot(
+            # Track latest snapshot before build; if build returns same snapshot -> no-op
+            latest_id_before = (
+                await db.execute(
+                    select(FeedSnapshot.id).where(
+                        FeedSnapshot.tenant_id == s.tenant_id,
+                        FeedSnapshot.partner_id == s.partner_id,
+                        FeedSnapshot.destination == s.destination.lower().strip(),
+                    ).order_by(desc(FeedSnapshot.created_at)).limit(1)
+                )
+            ).scalar_one_or_none()
+
+            snap = await build_partner_feed_snapshot(
                 db,
                 tenant_id=s.tenant_id,
                 partner_id=s.partner_id,
                 destination=s.destination,
                 store=store,
             )
-            built += 1
+            
+            if latest_id_before is None or snap.id != latest_id_before:
+                built += 1
+            else:
+                skipped += 1
 
         await db.commit()
 
     await engine.dispose()
-    return built
+    return built, skipped
 
 async def main():
     logging.basicConfig(level=logging.INFO)
