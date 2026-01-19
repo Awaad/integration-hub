@@ -85,8 +85,8 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     while True:
         try:
-            n = await _tick()
-            log.info("feed_dispatcher: built %d snapshots", n)
+            built, skipped = await _tick()
+            log.info("feed_dispatcher: built=%d skipped=%d", built, skipped)
         except Exception:
             log.exception("feed_dispatcher: tick crashed")
         await asyncio.sleep(POLL_SECONDS)
