@@ -50,6 +50,7 @@ async def _area_id_for(db: AsyncSession, *, country_code: str, city_slug: str, a
 
 class Evler101FeedPlugin:
     destination = "101evler"
+    format = "xml"
 
     async def build(self, *, db: AsyncSession, tenant_id: str, partner_id: str, config: dict[str, Any]) -> FeedBuildOutput:
         # Load listings for partner

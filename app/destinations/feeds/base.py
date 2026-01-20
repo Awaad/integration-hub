@@ -14,6 +14,7 @@ class FeedBuildOutput:
 
 class HostedFeedPlugin(Protocol):
     destination: str
+    format: str  # "xml" | "csv" |
 
     async def build(
         self,

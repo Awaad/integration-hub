@@ -13,6 +13,7 @@ from app.models.listing import Listing
 
 class PartnerCSVFeedPlugin:
     destination = "partner_csv"
+    format = "csv"
 
     async def build(self, *, db: AsyncSession, tenant_id: str, partner_id: str, config: dict[str, Any]) -> FeedBuildOutput:
         rows = (await db.execute(select(Listing).where(
