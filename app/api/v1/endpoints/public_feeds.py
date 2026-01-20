@@ -1,11 +1,12 @@
 from __future__ import annotations
-import gzip
+import hashlib
 from datetime import timezone
 from email.utils import format_datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 from app.destinations.feeds.registry import get_feed_plugin
+from app.services.rate_limit import TokenRateLimiter
 from app.services.storage import LocalObjectStore
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from sqlalchemy import select, desc
@@ -21,6 +22,10 @@ router = APIRouter()
 
 # Dispatcher polls every 30s; 60s cache is a reasonable default.
 CACHE_MAX_AGE_SECONDS = 60
+
+# Create once (reuse Redis pool)
+_limiter = TokenRateLimiter(settings.redis_url)
+_store = LocalObjectStore(settings.feed_storage_dir)
 
 def _media_type(ext: str) -> str:
     ext = (ext or "").lower().strip()
@@ -41,7 +46,7 @@ def _http_date(dt) -> str:
 
 
 def _etag_value(content_hash: str) -> str:
-    # Strong ETag, quoted per RFC.
+    # Strong ETag
     return f"\"{content_hash}\""
 
 
@@ -60,12 +65,38 @@ def _if_none_match_matches(if_none_match: str | None, etag: str) -> bool:
             return True
     return False
 
+def _token_key(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+async def _rate_limit_or_429(*, partner_id: str, dest: str, token: str) -> dict[str, str]:
+    rl = await _limiter.allow(
+        key=f"public_feed:{partner_id}:{dest}:{_token_key(token)}",
+        limit=60,
+        window_seconds=60,
+    )
+    if not rl.allowed:
+        # include Retry-After
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(rl.reset_seconds)},
+        )
+
+    return {
+        "X-RateLimit-Limit": "60",
+        "X-RateLimit-Remaining": str(rl.remaining),
+        "X-RateLimit-Reset": str(rl.reset_seconds),
+    }
+
+
 async def _resolve_snapshot_and_headers(
     *,
     db: AsyncSession,
     store: LocalObjectStore,
     partner_id: str,
     destination: str,
+    ext: str,
     token: str,
     request: Request,
 ):
@@ -110,6 +141,10 @@ async def _resolve_snapshot_and_headers(
     if not snap:
         raise HTTPException(status_code=404, detail="No snapshot available")
 
+     # extra safety: snapshot format should match ext
+    if (snap.format or "").lower().strip() != ext:
+        raise HTTPException(status_code=404, detail="No snapshot available for requested format")
+    
     etag = _etag_value(snap.content_hash)
     last_modified = _http_date(snap.created_at)
 
@@ -136,7 +171,7 @@ async def _resolve_snapshot_and_headers(
     if not path.exists():
         raise HTTPException(status_code=404, detail="Snapshot file missing")
 
-    return path, headers
+    return dest, path, headers
 
 
 @router.get("/feeds/{partner_id}/{destination}.xml")
@@ -148,17 +183,20 @@ async def get_public_feed_xml(
     token: str = Query(..., min_length=10),
     db: AsyncSession = Depends(get_db),
 ):
-    store = LocalObjectStore(settings.feed_storage_dir)
 
-    path, headers = await _resolve_snapshot_and_headers(
+    dest, path, headers = await _resolve_snapshot_and_headers(
         db=db,
-        store=store,
+        store=_store,
         partner_id=partner_id,
         destination=destination,
         ext=ext,
         token=token,
         request=request,
     )
+
+    # Rate limit (after auth)
+    rl_headers = await _rate_limit_or_429(partner_id=partner_id, dest=dest, token=token)
+    headers.update(rl_headers)
 
     if _if_none_match_matches(request.headers.get("if-none-match"), headers["ETag"]):
         return Response(status_code=304, headers=headers)
@@ -175,17 +213,19 @@ async def head_public_feed_xml(
     token: str = Query(..., min_length=10),
     db: AsyncSession = Depends(get_db),
 ):
-    store = LocalObjectStore(settings.feed_storage_dir)
 
-    _path, headers = await _resolve_snapshot_and_headers(
+    dest, path, headers = await _resolve_snapshot_and_headers(
         db=db,
-        store=store,
+        store=_store,
         partner_id=partner_id,
         destination=destination,
         ext=ext,
         token=token,
         request=request,
     )
+
+    rl_headers = await _rate_limit_or_429(partner_id=partner_id, dest=dest, token=token)
+    headers.update(rl_headers)
 
     if _if_none_match_matches(request.headers.get("if-none-match"), headers["ETag"]):
         return Response(status_code=304, headers=headers)
