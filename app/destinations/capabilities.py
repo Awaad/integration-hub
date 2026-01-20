@@ -6,6 +6,8 @@ Transport = Literal["push_api", "hosted_feed", "pull_only"]
 AuthType = Literal["none", "api_key", "basic", "oauth2", "hmac", "custom"]
 
 
+ListingInclusionPolicy = Literal["exclude_inactive", "include_with_status"]
+
 @dataclass(frozen=True)
 class DestinationCapabilities:
     """
@@ -22,6 +24,7 @@ class DestinationCapabilities:
 
     features: dict[str, bool] = field(default_factory=dict)
 
+    listing_inclusion_policy: ListingInclusionPolicy = "exclude_inactive"
     # operational hints
     max_requests_per_minute: int | None = None
     max_payload_bytes: int | None = None

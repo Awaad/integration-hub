@@ -11,6 +11,7 @@ class PartnerCSVHostedFeedConnector(DestinationConnector):
             transport="hosted_feed",
             supports_delete=False,
             supports_media=False,
+            listing_inclusion_policy="include_with_status",
         )
 
     async def publish_listing(self, *, payload: dict, credentials: dict) -> PublishResult:

@@ -14,8 +14,11 @@ from app.models.geo_country import GeoCountry
 from app.models.geo_city import GeoCity
 from app.models.geo_area import GeoArea
 from app.services.feeds.evler101_xml import build_101evler_xml, Evler101Ad
+from app.services.listing_state import canonical_status, should_include_listing
 from app.destinations.feeds.base import FeedBuildOutput
 from app.destinations.evler101.ad_projection import project_ad_fields
+from app.destinations.registry import get_destination_connector
+
 
 
 def _slug(s: str) -> str:
@@ -53,6 +56,11 @@ class Evler101FeedPlugin:
     format = "xml"
 
     async def build(self, *, db: AsyncSession, tenant_id: str, partner_id: str, config: dict[str, Any]) -> FeedBuildOutput:
+        
+        # Determine listing inclusion policy (once)
+        connector = get_destination_connector(self.destination)
+        policy = connector.capabilities().listing_inclusion_policy
+        
         # Load listings for partner
         rows = (await db.execute(select(Listing).where(
             Listing.tenant_id == tenant_id,
@@ -65,6 +73,11 @@ class Evler101FeedPlugin:
         ads: list[Evler101Ad] = []
 
         for r in rows:
+            # Decide inclusion based on canonical status + policy
+            status = canonical_status(r.payload)
+            if not should_include_listing(policy=policy, status=status):
+                continue
+
             can = ListingCanonicalV1.model_validate(r.payload)
 
             # Resolve required mappings
@@ -122,6 +135,9 @@ class Evler101FeedPlugin:
                 room_count_id=str(room_count_id) if room_count_id else None,
                 title_type_id=str(title_type_id) if title_type_id else None,
             )
+            # If later a destination(101evler) supports status, inject it here under policy include_with_status.
+
+            
             for w in proj_warn:
                 warnings.append({"listing_id": can.canonical_id, "code": w.code, "message": w.message})
 
@@ -148,6 +164,6 @@ class Evler101FeedPlugin:
             format="xml",
             bytes=xml_bytes,
             listing_count=count,
-            meta={"generator": "evler101_feed_v1", "warnings": warnings},
+            meta={"generator": "evler101_feed_v1", "warnings": warnings, "listing_inclusion_policy": policy,},
             content_hash=h,
         )

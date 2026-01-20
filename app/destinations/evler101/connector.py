@@ -23,7 +23,8 @@ class Evler101HostedFeedConnector(DestinationConnector):
             transport="hosted_feed",
             supports_delete=False,      # not specified yet
             supports_media=True,        # feed supports <ad_pictures> :contentReference[oaicite:7]{index=7}
-            features={"timed_offers": False}
+            features={"timed_offers": False},
+            listing_inclusion_policy="exclude_inactive",
         )
 
     async def publish_listing(self, *, payload: dict, credentials: dict) -> PublishResult:
