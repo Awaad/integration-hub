@@ -5,6 +5,7 @@ from email.utils import format_datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from app.destinations.feeds.registry import get_feed_plugin
 from app.services.storage import LocalObjectStore
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from sqlalchemy import select, desc
@@ -21,6 +22,15 @@ router = APIRouter()
 # Dispatcher polls every 30s; 60s cache is a reasonable default.
 CACHE_MAX_AGE_SECONDS = 60
 
+def _media_type(ext: str) -> str:
+    ext = (ext or "").lower().strip()
+    if ext == "xml":
+        return "application/xml"
+    if ext == "csv":
+        return "text/csv; charset=utf-8"
+    if ext == "json":
+        return "application/json"
+    return "application/octet-stream"
 
 def _http_date(dt) -> str:
     if dt is None:
@@ -60,6 +70,16 @@ async def _resolve_snapshot_and_headers(
     request: Request,
 ):
     dest = destination.lower().strip()
+    ext = ext.lower().strip()
+
+    # Validate ext matches plugin contract
+    try:
+        plugin = get_feed_plugin(dest)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Unknown destination: {dest}")
+
+    if ext != plugin.format:
+        raise HTTPException(status_code=404, detail="Unsupported format")
 
     setting = (
         await db.execute(
@@ -123,6 +143,7 @@ async def _resolve_snapshot_and_headers(
 async def get_public_feed_xml(
     partner_id: str,
     destination: str,
+    ext: str,
     request: Request,
     token: str = Query(..., min_length=10),
     db: AsyncSession = Depends(get_db),
@@ -134,6 +155,7 @@ async def get_public_feed_xml(
         store=store,
         partner_id=partner_id,
         destination=destination,
+        ext=ext,
         token=token,
         request=request,
     )
@@ -141,13 +163,14 @@ async def get_public_feed_xml(
     if _if_none_match_matches(request.headers.get("if-none-match"), headers["ETag"]):
         return Response(status_code=304, headers=headers)
 
-    return FileResponse(path, media_type="application/xml", headers=headers)
+    return FileResponse(path, media_type=_media_type(ext), headers=headers)
 
 
-@router.head("/feeds/{partner_id}/{destination}.xml")
+@router.head("/feeds/{partner_id}/{destination}.{ext}")
 async def head_public_feed_xml(
     partner_id: str,
     destination: str,
+    ext: str,
     request: Request,
     token: str = Query(..., min_length=10),
     db: AsyncSession = Depends(get_db),
@@ -159,6 +182,7 @@ async def head_public_feed_xml(
         store=store,
         partner_id=partner_id,
         destination=destination,
+        ext=ext,
         token=token,
         request=request,
     )
