@@ -7,7 +7,8 @@ from app.models.feed_snapshot import FeedSnapshot
 from app.models.listing import Listing
 from app.services.storage import LocalObjectStore
 from app.models.partner_destination_setting import PartnerDestinationSetting
-from app.services.feed_fingerprint import compute_feed_fingerprint
+
+from app.services.feed_hashes import hash_config, hash_listing_inputs, hash_fingerprint
 from app.destinations.feeds.registry import get_feed_plugin
 from app.services.gzip_util import gzip_bytes
 
@@ -52,11 +53,9 @@ async def build_partner_feed_snapshot(
     ).all()
 
     listing_summaries = [{"id": str(rid), "hash": (ch or "")} for (rid, ch) in rows]
-    fingerprint = compute_feed_fingerprint(
-        destination=dest,
-        config=cfg_for_fp,
-        listing_summaries=listing_summaries,
-    )
+    config_hash = hash_config(cfg_for_fp)
+    input_hash = hash_listing_inputs(listing_summaries)
+    fingerprint = hash_fingerprint(destination=dest, config_hash=config_hash, input_hash=input_hash)
 
     # Load latest snapshot for this partner+destination
     latest = (
@@ -93,11 +92,10 @@ async def build_partner_feed_snapshot(
     gz_data = gzip_bytes(out.bytes)
     gz_uri = store.put_bytes(key=gz_key, data=gz_data)
 
-    snap.gzip_storage_uri = gz_uri
-    snap.gzip_size_bytes = len(gz_data)
-
     meta = dict(out.meta or {})
     meta["fingerprint"] = fingerprint
+    meta["config_hash"] = config_hash
+    meta["input_hash"] = input_hash
     meta["built_at"] = datetime.now(timezone.utc).isoformat()
     meta["listing_count"] = out.listing_count
     meta["gzip_available"] = True
@@ -107,6 +105,8 @@ async def build_partner_feed_snapshot(
         partner_id=partner_id,
         destination=dest,
         storage_uri=uri,
+        gzip_storage_uri=gz_uri,
+        gzip_size_bytes=len(gz_data),
         format=out.format,
         content_hash=out.content_hash,
         listing_count=out.listing_count,
