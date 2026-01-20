@@ -1,3 +1,5 @@
+from app.services import audit
+from app.services.auth import Actor
 from fastapi import APIRouter, Depends
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +12,7 @@ from app.services.internal_admin import require_internal_admin
 router = APIRouter()
 
 @router.put("/admin/destinations/enums", dependencies=[Depends(require_internal_admin)])
-async def upsert_destination_enum(body: DestinationEnumUpsert, db: AsyncSession = Depends(get_db)):
+async def upsert_destination_enum(body: DestinationEnumUpsert, db: AsyncSession = Depends(get_db), actor: Actor = Depends(require_internal_admin),):
     dest = body.destination.lower().strip()
     ns = body.namespace.lower().strip()
     key = body.source_key.strip()
@@ -32,6 +34,18 @@ async def upsert_destination_enum(body: DestinationEnumUpsert, db: AsyncSession 
         .returning(DestinationEnumMapping)
     )
     row = (await db.execute(stmt)).scalar_one()
+
+    await audit(
+        db,
+        tenant_id=None,
+        partner_id=None,
+        actor_api_key_id=getattr(actor, "api_key_id", None),
+        action="admin.destination_enum.upsert",
+        target_type="destination_enum_mapping",
+        target_id=f"{dest}:{ns}:{key}",
+        detail={"destination": dest, "namespace": ns, "source_key": key},
+    )
+    
     await db.commit()
     return {
         "destination": row.destination,
@@ -41,7 +55,7 @@ async def upsert_destination_enum(body: DestinationEnumUpsert, db: AsyncSession 
     }
 
 @router.post("/admin/destinations/enums/bulk", dependencies=[Depends(require_internal_admin)])
-async def bulk_upsert_destination_enums(body: DestinationEnumBulkUpsert, db: AsyncSession = Depends(get_db)):
+async def bulk_upsert_destination_enums(body: DestinationEnumBulkUpsert, db: AsyncSession = Depends(get_db), actor: Actor = Depends(require_internal_admin),):
     dest = body.destination.lower().strip()
     ns = body.namespace.lower().strip()
     count = 0
@@ -64,6 +78,17 @@ async def bulk_upsert_destination_enums(body: DestinationEnumBulkUpsert, db: Asy
         )
         await db.execute(stmt)
         count += 1
+
+    await audit(
+        db,
+        tenant_id=None,
+        partner_id=None,
+        actor_api_key_id=getattr(actor, "api_key_id", None),
+        action="admin.destination_enums.bulk_upsert",
+        target_type="destination_enum_mapping",
+        target_id=f"{dest}:{ns}",
+        detail={"destination": dest, "namespace": ns, "count": count},
+    )
 
     await db.commit()
     return {"destination": dest, "namespace": ns, "count": count}
