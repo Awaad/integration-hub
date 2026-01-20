@@ -1,3 +1,4 @@
+from app.services.audit import audit
 from app.services.feed_urls import build_public_feed_url
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -8,7 +9,7 @@ from app.core.db import get_db
 from app.models.partner_destination_setting import PartnerDestinationSetting
 from app.services.auth import Actor, require_partner_admin
 from app.services.partner_destination_config import ensure_feed_token
-from app.destinations.feeds.registry import get_feed_plugin
+
 
 
 router = APIRouter()
@@ -72,6 +73,18 @@ async def rotate_feed_token(
     cfg["feed_token"] = secrets.token_urlsafe(24)
     setting.config = cfg
     setting.updated_by = actor.api_key_id
+
+    await audit(
+        db,
+        tenant_id=actor.tenant_id,
+        partner_id=partner_id,
+        actor_api_key_id=actor.api_key_id,
+        action="feed_token.rotated",
+        target_type="partner_destination_setting",
+        target_id=f"{partner_id}:{dest}",
+        detail={"destination": dest},
+    )
+    
     await db.commit()
 
     return {
