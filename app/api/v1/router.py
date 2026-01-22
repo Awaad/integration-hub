@@ -21,6 +21,7 @@ from app.api.v1.endpoints.mapping_diff import router as mapping_diff_router
 from app.api.v1.endpoints.mapping_admin_imports import router as mapping_admin_imports_router
 from app.api.v1.endpoints.feed_urls import router as feed_urls_router
 from app.api.v1.endpoints.export_readiness import router as export_readiness_router
+from app.api.v1.endpoints.catalog_import_admin import router as mapping_admin_imports_router
 
 
 router = APIRouter(prefix="/v1")
@@ -45,3 +46,4 @@ router.include_router(mapping_diff_router, tags=["mapping-diff"])
 router.include_router(mapping_admin_imports_router, tags=["mapping-admin-imports"])
 router.include_router(feed_urls_router, tags=["feed-urls"])
 router.include_router(export_readiness_router, tags=["export-readiness"])
+router.include_router(mapping_admin_imports_router, tags=["catalog-import-admin"])
