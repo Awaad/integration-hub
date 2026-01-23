@@ -57,18 +57,6 @@ async def ingest_listing(
     requested_version = adapter_version
     used_version = requested_version or default_version
 
-    forbidden_override = bool(requested_version) and (not allow_adapter_override)
-    if forbidden_override:
-        run.errors = [{
-            "type": "forbidden",
-            "message": "adapter_version override not allowed",
-            "requested_adapter_version": requested_version,
-            "used_adapter_version": used_version,
-        }]
-        run.status = "failed"
-        await db.flush()
-        raise IngestError(403, {"errors": run.errors, "ingest_run_id": run.id})
-
     run = IngestRun(
         tenant_id=tenant_id,
         partner_id=partner_id,
@@ -84,6 +72,18 @@ async def ingest_listing(
         adapter_version=used_version,
     )
     db.add(run)
+
+    # Record forbidden adapter override as a failed ingest run (keeps observability)
+    if requested_version and not allow_adapter_override:
+        run.errors = [{
+            "type": "forbidden",
+            "message": "adapter_version override not allowed",
+            "requested_adapter_version": requested_version,
+            "used_adapter_version": used_version,
+        }]
+        run.status = "failed"
+        await db.flush()
+        raise IngestError(403, {"errors": run.errors, "ingest_run_id": run.id})
 
     try:
         await db.flush()  # ensures run.id available; also enforces idempotency constraint early
@@ -106,13 +106,6 @@ async def ingest_listing(
         return None, False, existing.id, existing.adapter_version
 
     try:
-        # adapter selection rules
-        if adapter_version and not allow_adapter_override:
-            run.errors = [{"type": "forbidden", "message": "adapter_version override not allowed"}]
-            run.status = "failed"
-            await db.flush()
-            raise IngestError(403, {"errors": run.errors, "ingest_run_id": run.id})
-
         used_version = adapter_version or default_adapter_version(partner_key_norm)
         run.adapter_version = used_version
 
