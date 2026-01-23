@@ -1,0 +1,25 @@
+{
+  "source": "101evler_pdf_v2026_01",
+  "items": [
+    {"source_key": "villa", "destination_value": "1"},
+    {"source_key": "flat", "destination_value": "2"},
+    {"source_key": "semi_detached", "destination_value": "3"},
+    {"source_key": "detached_house", "destination_value": "4"},
+    {"source_key": "plot", "destination_value": "5"},
+    {"source_key": "land", "destination_value": "6"},
+    {"source_key": "shop", "destination_value": "7"},
+    {"source_key": "hotel", "destination_value": "8"},
+    {"source_key": "studio_flat", "destination_value": "9"},
+    {"source_key": "penthouse", "destination_value": "10"},
+    {"source_key": "bungalow", "destination_value": "11"},
+    {"source_key": "business", "destination_value": "12"},
+    {"source_key": "warehouse", "destination_value": "14"},
+    {"source_key": "timeshare", "destination_value": "15"},
+    {"source_key": "complete_building", "destination_value": "16"},
+    {"source_key": "ruin_building", "destination_value": "17"},
+    {"source_key": "workplace_for_sale", "destination_value": "18"},
+    {"source_key": "office", "destination_value": "19"},
+    {"source_key": "residence", "destination_value": "20"},
+    {"source_key": "unfinished_building", "destination_value": "21"}
+  ]
+}

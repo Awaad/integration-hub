@@ -1,0 +1,27 @@
+{
+  "source": "101evler_pdf_v2026_01",
+  "items": [
+    {"source_key": "1+0", "destination_value": "1"},
+    {"source_key": "1+1", "destination_value": "2"},
+    {"source_key": "2+1", "destination_value": "3"},
+    {"source_key": "2+2", "destination_value": "4"},
+    {"source_key": "3+1", "destination_value": "5"},
+    {"source_key": "3+2", "destination_value": "6"},
+    {"source_key": "4+1", "destination_value": "7"},
+    {"source_key": "4+2", "destination_value": "8"},
+    {"source_key": "5", "destination_value": "9"},
+    {"source_key": "5+1", "destination_value": "10"},
+    {"source_key": "5+2", "destination_value": "11"},
+    {"source_key": "5+3", "destination_value": "12"},
+    {"source_key": "5+4", "destination_value": "13"},
+    {"source_key": "6+1", "destination_value": "14"},
+    {"source_key": "6+2", "destination_value": "15"},
+    {"source_key": "6+3", "destination_value": "16"},
+    {"source_key": "6+4", "destination_value": "17"},
+    {"source_key": "7+1", "destination_value": "18"},
+    {"source_key": "7+2", "destination_value": "19"},
+    {"source_key": "7+3", "destination_value": "20"},
+    {"source_key": "8", "destination_value": "21"},
+    {"source_key": "2", "destination_value": "22"}
+  ]
+}

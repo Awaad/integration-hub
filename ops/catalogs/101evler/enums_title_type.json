@@ -1,0 +1,13 @@
+{
+  "source": "101evler_pdf_v2026_01",
+  "items": [
+    {"source_key": "turkish_title_deeds", "destination_value": "1"},
+    {"source_key": "exchange_deeds", "destination_value": "2"},
+    {"source_key": "foreign_title_deeds_pre74", "destination_value": "3"},
+    {"source_key": "council_homes", "destination_value": "4"},
+    {"source_key": "government_lands", "destination_value": "5"},
+    {"source_key": "tahsis", "destination_value": "6"},
+    {"source_key": "mucahit_puani", "destination_value": "7"},
+    {"source_key": "leasehold", "destination_value": "8"}
+  ]
+}
