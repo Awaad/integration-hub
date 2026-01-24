@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from datetime import datetime
 from app.core.ids import gen_id
 from sqlalchemy import String, DateTime, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
@@ -19,4 +19,4 @@ class DestinationCatalogImportItem(Base):
     action: Mapped[str] = mapped_column(String(16), nullable=False)  # insert|update|noop|invalid
     detail: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
-    created_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False,)
