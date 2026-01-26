@@ -22,6 +22,8 @@ from app.api.v1.endpoints.mapping_admin_imports import router as mapping_admin_i
 from app.api.v1.endpoints.feed_urls import router as feed_urls_router
 from app.api.v1.endpoints.export_readiness import router as export_readiness_router
 from app.api.v1.endpoints.catalog_import_admin import router as mapping_admin_imports_router
+from app.api.v1.endpoints.feed_health_admin import router as feed_health_admin_router
+from app.api.v1.endpoints.feed_health_partner import router as feed_health_partner_router
 
 
 router = APIRouter(prefix="/v1")
@@ -47,3 +49,5 @@ router.include_router(mapping_admin_imports_router, tags=["mapping-admin-imports
 router.include_router(feed_urls_router, tags=["feed-urls"])
 router.include_router(export_readiness_router, tags=["export-readiness"])
 router.include_router(mapping_admin_imports_router, tags=["catalog-import-admin"])
+router.include_router(feed_health_admin_router, tags=["feed-health-admin"])
+router.include_router(feed_health_partner_router, tags=["feed-health-partner"])

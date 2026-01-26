@@ -4,6 +4,8 @@ import hashlib
 from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+import xml.etree.ElementTree as ET
+from app.services.feed_stats import Timer, summarize_warnings, summarize_skips
 
 from app.canonical.v1.listing import ListingCanonicalV1
 from app.models.listing import Listing
@@ -70,12 +72,20 @@ class Evler101FeedPlugin:
         ))).scalars().all()
 
         warnings: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
         ads: list[Evler101Ad] = []
 
         for r in rows:
             # Decide inclusion based on canonical status + policy
             status = canonical_status(r.payload)
             if not should_include_listing(policy=policy, status=status):
+                skipped.append(
+                    {
+                        "listing_id": str(getattr(r, "id", "")) or str(r.payload.get("canonical_id") or ""),
+                        "reason": "policy_excluded",
+                        "detail": f"status={status}",
+                    }
+                )
                 continue
 
             can = ListingCanonicalV1.model_validate(r.payload)
@@ -84,23 +94,51 @@ class Evler101FeedPlugin:
             prop_type = getattr(can.property, "property_type", None) if can.property else None
             type_id = await _enum(db, ns="property_type", key=str(prop_type)) if prop_type else None
             if not type_id:
-                warnings.append({"listing_id": can.canonical_id, "code": "MISSING_TYPE_ID", "message": f"Unmapped property_type={prop_type}"})
+                warnings.append(
+                    {
+                        "listing_id": can.canonical_id, 
+                        "code": "MISSING_TYPE_ID", 
+                        "message": f"Unmapped property_type={prop_type}"
+                        }
+                )
+                skipped.append(
+                    {
+                        "listing_id": can.canonical_id,
+                        "reason": "missing_mapping",
+                        "detail": f"property_type={prop_type}",
+                    }
+                )
                 continue
 
             if not can.list_price:
                 warnings.append({"listing_id": can.canonical_id, "code": "MISSING_PRICE", "message": "Missing list_price"})
+                skipped.append({"listing_id": can.canonical_id, "reason": "missing_required", "detail": "list_price"})
                 continue
 
             currency_id = await _enum(db, ns="currency", key=str(can.list_price.currency))
             if not currency_id:
                 warnings.append({"listing_id": can.canonical_id, "code": "MISSING_CURRENCY", "message": f"Unmapped currency={can.list_price.currency}"})
+                skipped.append({"listing_id": can.canonical_id, "reason": "missing_mapping", "detail": f"currency={can.list_price.currency}"})
                 continue
 
             city_slug = _slug(can.address.city) if can.address else ""
             area_slug = _slug(getattr(can.address, "area", None) or "") if can.address else ""
             area_id = await _area_id_for(db, country_code="NCY", city_slug=city_slug, area_slug=area_slug)
             if not area_id:
-                warnings.append({"listing_id": can.canonical_id, "code": "MISSING_AREA_ID", "message": f"Unmapped geo {city_slug}:{area_slug}"})
+                warnings.append(
+                    {
+                        "listing_id": can.canonical_id, 
+                        "code": "MISSING_AREA_ID", 
+                        "message": f"Unmapped geo {city_slug}:{area_slug}"
+                        }
+                )
+                skipped.append(
+                    {
+                        "listing_id": can.canonical_id,
+                        "reason": "missing_geo_mapping",
+                        "detail": f"{city_slug}:{area_slug}",
+                    }
+                )
                 continue
 
             # Agent external id -> first_realtor_id (docs uses realtor IDs) :contentReference[oaicite:25]{index=25}
@@ -160,10 +198,37 @@ class Evler101FeedPlugin:
         # content_hash for caching/ETag: stable over listing hashes + config
         h = hashlib.sha256(xml_bytes).hexdigest()
 
+        # Parse check (health signal)
+        parse_ok = True
+        with Timer() as t:
+            try:
+                ET.fromstring(xml_bytes)
+            except Exception:
+                parse_ok = False
+        parse_ms = t.ms
+
+        warnings_by_code = summarize_warnings(warnings)
+        skipped_by_reason = summarize_skips(skipped)
+
+        meta: dict[str, Any] = {
+            "generator": "evler101_feed_v1",
+            "listing_inclusion_policy": policy,
+            "warnings_count": int(sum(warnings_by_code.values())),
+            "warnings_by_code": dict(warnings_by_code),
+            "skipped_count": int(sum(skipped_by_reason.values())),
+            "skipped_by_reason": dict(skipped_by_reason),
+            "parse_ok": parse_ok,
+            "parse_ms": parse_ms,
+        }
+
+        # Capped details
+        meta["warnings"] = warnings[:200]
+        meta["skipped"] = skipped[:200]
+
         return FeedBuildOutput(
             format="xml",
             bytes=xml_bytes,
             listing_count=count,
-            meta={"generator": "evler101_feed_v1", "warnings": warnings, "listing_inclusion_policy": policy,},
+            meta=meta,
             content_hash=h,
         )
