@@ -1,5 +1,6 @@
 from __future__ import annotations
 import uuid
+from app.core.ids import gen_id
 from sqlalchemy import String, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -9,7 +10,7 @@ from app.models.base import Base
 class DestinationCatalogSet(Base):
     __tablename__ = "destination_catalog_sets"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: f"dcs_{uuid.uuid4().hex}")
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("dcs"))
     destination: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     country_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
