@@ -1,4 +1,5 @@
 from __future__ import annotations
+import datetime
 import uuid
 from sqlalchemy import String, DateTime, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,4 +24,4 @@ class DestinationCatalogSetItem(Base):
     destination_area_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
