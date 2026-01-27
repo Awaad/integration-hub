@@ -9,6 +9,7 @@ from app.schemas.partner_destination import PartnerDestinationUpsert, PartnerDes
 from app.services.auth import Actor, require_partner_admin
 from app.destinations.registry import supported_destinations
 from app.services.redaction import redact_payload
+from app.services.audit import audit
 
 
 router = APIRouter()
@@ -119,3 +120,52 @@ async def upsert_partner_destination(
         created_by=row.created_by,
         updated_by=row.updated_by,
     )
+
+
+@router.post("/partners/{partner_id}/destinations/{destination}:set-mode")
+async def set_destination_mode(
+    partner_id: str,
+    destination: str,
+    body: dict,
+    actor: Actor = Depends(require_partner_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if actor.partner_id != partner_id:
+        raise HTTPException(status_code=403, detail="Cross-partner access forbidden")
+
+    dest = destination.lower().strip()
+    if dest not in supported_destinations():
+        raise HTTPException(status_code=404, detail=f"Unknown destination: {dest}")
+
+    mode = str(body.get("mode") or "").lower().strip()
+    if mode not in ("live", "sandbox"):
+        raise HTTPException(status_code=422, detail="mode must be live or sandbox")
+
+    setting = (await db.execute(select(PartnerDestinationSetting).where(
+        PartnerDestinationSetting.tenant_id == actor.tenant_id,
+        PartnerDestinationSetting.partner_id == partner_id,
+        PartnerDestinationSetting.destination == dest,
+        PartnerDestinationSetting.is_enabled.is_(True),
+    ))).scalar_one_or_none()
+    if not setting:
+        raise HTTPException(status_code=404, detail="Destination not enabled")
+
+    cfg = dict(setting.config or {})
+    old_mode = str(cfg.get("mode") or "live").lower().strip()
+    cfg["mode"] = mode
+    setting.config = cfg
+    setting.updated_by = actor.api_key_id
+
+    await audit(
+        db,
+        tenant_id=actor.tenant_id,
+        partner_id=partner_id,
+        actor_api_key_id=actor.api_key_id,
+        action="destination.mode.updated",
+        target_type="partner_destination_setting",
+        target_id=f"{partner_id}:{dest}",
+        detail={"old_mode": old_mode, "mode": mode},
+    )
+    await db.commit()
+
+    return {"ok": True, "destination": dest, "mode": mode}
