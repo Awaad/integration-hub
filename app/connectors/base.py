@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol, Any
 
-
+# EXCESSIVE MAYBE DELETE LATER AND RELY ON DESTINATIONS/BASE.PY
 @dataclass(frozen=True)
 class PublishResult:
     ok: bool
