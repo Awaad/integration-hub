@@ -26,7 +26,7 @@ async def create_draft_catalog_set_from_run(
         .with_for_update()
     )).scalar_one()
 
-    if run.destination.lower().strip() != dest:
+    if destination and run.destination.lower().strip() != dest:
         raise ValueError("Import run destination mismatch")
 
     # If already linked, return the same set (idempotent)
