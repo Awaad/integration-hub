@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,19 +9,23 @@ from app.services.publish_service import build_projected_payload_from_parts
 
 async def build_projected_payload_for_listing(
     db: AsyncSession, *, tenant_id: str, partner_id: str, destination: str, listing_id: str
-) -> tuple[dict, str | None]:
+) -> tuple[dict[str, Any], str | None, str]:
+    
+    dest = destination.lower().strip()
+
     listing = (await db.execute(select(Listing).where(
         Listing.id == listing_id,
         Listing.tenant_id == tenant_id,
         Listing.partner_id == partner_id,
-    ))).scalar_oneor_none()
+    ))).scalar_one_or_none()
+
 
     if not listing:
         raise ValueError("listing_not_found")
 
     mapping = (await db.execute(select(ListingExternalMapping).where(
         ListingExternalMapping.tenant_id == tenant_id,
-        ListingExternalMapping.destination == destination,
+        ListingExternalMapping.destination == dest,
         ListingExternalMapping.listing_id == listing_id,
     ))).scalar_one_or_none()
 
