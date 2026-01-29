@@ -10,7 +10,7 @@ from app.models.agent_credential import AgentCredential
 from app.models.delivery import Delivery, DeliveryAttempt
 from app.models.listing import Listing
 from app.models.listing_external_mapping import ListingExternalMapping
-from app.services.publish_service import build_projected_payload, publish_projected_payload
+from app.services.publish_service import build_projected_payload, publish_projected_payload_for_delivery
 
 from app.services.retry import compute_backoff_seconds
 
@@ -77,11 +77,15 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
     projected_payload, external_listing_id = await build_projected_payload(db, delivery=d)
 
     # Publish via destination connector
-    result = await publish_projected_payload(
-        destination=d.destination,
-        payload=projected_payload,
-        credentials=secrets,
-    )
+    result = await publish_projected_payload_for_delivery(
+    db,
+    tenant_id=d.tenant_id,
+    partner_id=d.partner_id,
+    destination=d.destination,
+    payload=projected_payload,
+    credentials=secrets,
+    request_id=d.id,  # for tracing
+)
 
 
     d.attempts += 1
