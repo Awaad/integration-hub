@@ -2,10 +2,12 @@ from __future__ import annotations
 from typing import Dict
 
 from app.projections.base import ListingProjector
-from app.projections.sample_passthrough import PassthroughProjector  # added below
+from app.projections.mls_demo_push import MlsDemoPushProjector
+from app.projections.sample_passthrough import PassthroughProjector  
 
 _PROJECTORS: Dict[str, ListingProjector] = {
     "passthrough": PassthroughProjector(),
+    "mls_demo_push": MlsDemoPushProjector(),
 }
 
 def get_projector(destination: str) -> ListingProjector:
