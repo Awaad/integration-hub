@@ -24,7 +24,12 @@ async def _project_listing(
     destination: str,
     listing_id: str,
 ) -> tuple[dict, str | None]:
-    listing = (await db.execute(select(Listing).where(Listing.id == listing_id))).scalar_one()
+    listing = (await db.execute(select(Listing).where(
+        Listing.id == listing_id,
+        Listing.tenant_id == tenant_id,
+        Listing.partner_id == partner_id,
+        )
+        )).scalar_one()
 
     canonical = ListingCanonicalV1.model_validate(listing.payload)
 
@@ -129,6 +134,7 @@ async def publish_projected_payload_for_delivery(
             PartnerDestinationSetting.tenant_id == tenant_id,
             PartnerDestinationSetting.partner_id == partner_id,
             PartnerDestinationSetting.destination == destination.lower().strip(),
+            PartnerDestinationSetting.is_enabled.is_(True),
         )
     )).scalar_one_or_none()
 
