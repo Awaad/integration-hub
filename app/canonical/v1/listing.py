@@ -64,9 +64,18 @@ class AddressV1(BaseModel):
     city: str | None = Field(default=None, max_length=120)
     region: str | None = Field(default=None, max_length=120)
     postal_code: str | None = Field(default=None, max_length=30)
-    country: str | None = Field(default=None, max_length=2, description="ISO 3166-1 alpha-2 if known")
+    country: str | None = Field(default=None, max_length=8, description="Country code used by Hub geo catalogs (e.g. NCY) or ISO 3166-1 alpha-2 if known")
     lat: float | None = None
     lng: float | None = None
+
+
+    @field_validator("country")
+    @classmethod
+    def normalize_country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return v.strip().upper()
+    
 
     @field_validator("lat")
     @classmethod
