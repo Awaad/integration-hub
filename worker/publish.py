@@ -73,19 +73,28 @@ async def publish_delivery(db: AsyncSession, delivery_id: str) -> None:
 
     secrets = decrypt_json(cred.secret_ciphertext)
     
-    # Build projected payload + current external_listing_id (if any)
-    projected_payload, external_listing_id = await build_projected_payload(db, delivery=d)
+    try:
+        # Build projected payload + current external_listing_id (if any)
+        projected_payload, external_listing_id = await build_projected_payload(db, delivery=d)
 
-    # Publish via destination connector
-    result = await publish_projected_payload_for_delivery(
-    db,
-    tenant_id=d.tenant_id,
-    partner_id=d.partner_id,
-    destination=d.destination,
-    payload=projected_payload,
-    credentials=secrets,
-    request_id=d.id,  # for tracing
-)
+        # Publish via destination connector
+        result = await publish_projected_payload_for_delivery(
+        db,
+        tenant_id=d.tenant_id,
+        partner_id=d.partner_id,
+        destination=d.destination,
+        payload=projected_payload,
+        credentials=secrets,
+        request_id=d.id,  # for tracing
+        )
+    except Exception as e:
+        await _record_attempt_failure(
+            db, d,
+            error_code="EXCEPTION",
+            error_message=str(e),
+            retryable=True,
+        )
+        return
 
 
     d.attempts += 1
