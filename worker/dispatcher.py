@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncEngine
 from sqlalchemy.sql import func
 
 from app.core.config import settings
@@ -15,10 +15,8 @@ POLL_SECONDS = 2
 BATCH_SIZE = 100
 
 
-async def _tick():
+async def _tick(Session: async_sessionmaker):
     log.info("tick: start")
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
-    Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with Session() as db:
         log.info("tick: querying due deliveries...")
@@ -39,7 +37,6 @@ async def _tick():
 
         if not ids:
             await db.commit()
-            await engine.dispose()
             return 0
 
         # Mark as pending-publish (optional status) to prevent double enqueue
@@ -50,7 +47,6 @@ async def _tick():
         )
         await db.commit()
 
-    await engine.dispose()
 
     log.info("tick: enqueueing %d tasks to celery...", len(ids))
     for delivery_id in ids:
@@ -65,12 +61,19 @@ async def main():
 
     logging.basicConfig(level=logging.INFO)
     log.info("dispatcher: started")
-    while True:
-        try:
-            await _tick()
-        except Exception:
-            log.exception("dispatcher: tick crashed")
-        await asyncio.sleep(POLL_SECONDS)
+
+    engine: AsyncEngine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        while True:
+            try:
+                await _tick(Session)
+            except Exception:
+                log.exception("dispatcher: tick crashed")
+            await asyncio.sleep(POLL_SECONDS)
+    finally:
+        await engine.dispose()
 
 
 if __name__ == "__main__":
