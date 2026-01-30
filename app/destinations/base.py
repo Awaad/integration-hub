@@ -33,6 +33,8 @@ class DestinationConnector(Protocol):
         *,
         payload: dict[str, Any],
         credentials: dict[str, Any],
+        mode: str = "live",                 
+        request_id: str | None = None,
     ) -> PublishResult:
         """
         Push API transport: do an upsert via HTTP.
@@ -46,6 +48,8 @@ class DestinationConnector(Protocol):
         *,
         external_listing_id: str,
         credentials: dict[str, Any],
+        mode: str = "live",                
+        request_id: str | None = None,
     ) -> PublishResult:
         """
         Only if supports_delete.
