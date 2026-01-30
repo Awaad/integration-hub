@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.canonical.v1.listing import ListingCanonicalV1
+from app.canonical.registry import resolve_schema
 from app.models.delivery import Delivery
 from app.models.listing import Listing
 from app.models.agent_external_identity import AgentExternalIdentity
@@ -31,7 +32,14 @@ async def _project_listing(
         )
         )).scalar_one()
 
-    canonical = ListingCanonicalV1.model_validate(listing.payload)
+    Model = resolve_schema(listing.schema, listing.schema_version)
+    canonical_any = Model.model_validate(listing.payload)
+
+    # publish path expects canonical listing 
+    if not isinstance(canonical_any, ListingCanonicalV1):
+        raise ValueError(f"Unsupported canonical type for publish: {listing.schema}@{listing.schema_version}")
+
+    canonical = canonical_any
 
     mapping = (await db.execute(
         select(ListingExternalMapping).where(
