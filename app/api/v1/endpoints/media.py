@@ -85,9 +85,44 @@ async def ingest_listing_media_from_url(
         ListingMedia.listing_id == listing.id,
         ListingMedia.media_id == media.id,
     )
+
+    base_values = dict(
+        id=gen_id("lmd"),
+        tenant_id=listing.tenant_id,
+        partner_id=listing.partner_id,
+        agent_id=listing.agent_id,
+        listing_id=listing.id,
+        media_id=media.id,
+        type=payload.type,
+        order_index=payload.order_index,
+        caption=payload.caption,
+        created_by=actor.api_key_id,
+        updated_by=actor.api_key_id,
+    )
+
+    conflict_key = ["tenant_id", "partner_id", "agent_id", "listing_id", "media_id"]
+
+    async def _upsert_link(*, is_primary: bool) -> str:
+        upsert_stmt = (
+            insert(ListingMedia)
+            .values(**base_values, is_primary=is_primary)
+            .on_conflict_do_update(
+                index_elements=conflict_key,
+                set_={
+                    "type": payload.type,
+                    "order_index": payload.order_index,
+                    "caption": payload.caption,
+                    "is_primary": is_primary,
+                    "updated_by": actor.api_key_id,
+                    "updated_at": func.now(),
+                },
+            )
+            .returning(ListingMedia.id)
+        )
+        return (await db.execute(upsert_stmt)).scalar_one()
+
     try:
         async with db.begin_nested():
-            
             if payload.is_primary:
                 await db.execute(
                     update(ListingMedia)
@@ -105,44 +140,28 @@ async def ingest_listing_media_from_url(
                     )
                 )
 
-            upsert_stmt = (
-                insert(ListingMedia)
-                .values(
-                    id=gen_id("lmd"),
-                    tenant_id=listing.tenant_id,
-                    partner_id=listing.partner_id,
-                    agent_id=listing.agent_id,
-                    listing_id=listing.id,
-                    media_id=media.id,
-                    type=payload.type,
-                    order_index=payload.order_index,
-                    caption=payload.caption,
-                    is_primary=payload.is_primary,
-                    created_by=actor.api_key_id,
-                    updated_by=actor.api_key_id,
-                )
-                .on_conflict_do_update(
-                    index_elements=["tenant_id", "partner_id", "agent_id", "listing_id", "media_id"],
-                    set_={
-                        "type": payload.type,
-                        "order_index": payload.order_index,
-                        "caption": payload.caption,
-                        "is_primary": payload.is_primary,
-                        "updated_by": actor.api_key_id,
-                        "updated_at": func.now(),
-                    },
-                )
-                .returning(ListingMedia)
-            )
-
-            link = (await db.execute(upsert_stmt)).scalar_one()
+            link_id = await _upsert_link(is_primary=payload.is_primary)
             
-            await db.flush()
+
+        link = (
+            await db.execute(select(ListingMedia).where(ListingMedia.id == link_id))
+        ).scalar_one()
 
     except IntegrityError:
-        # savepoint auto-rolls back; do NOT rollback whole transaction
-        # Re-fetch whatever exists now (someone else won)
-        link = (await db.execute(link_stmt)).scalar_one()
+        # Savepoint rolled back automatically. See what exists now.
+        link = (await db.execute(link_stmt)).scalar_one_or_none()
+        if link is not None:
+            pass
+        elif payload.is_primary:
+            # Retry: attach the media but don't fight for primary
+            async with db.begin_nested():
+                link_id = await _upsert_link(is_primary=False)
+                await db.flush()
+            link = (
+                await db.execute(select(ListingMedia).where(ListingMedia.id == link_id))
+            ).scalar_one()
+        else:
+            raise
 
 
     resp = MediaIngestUrlOut(
@@ -181,6 +200,7 @@ async def ingest_listing_media_from_url(
     await store_idempotency_response(
         db=db,
         actor=actor,
+        listing_id=listing.id,
         idempotency_key=idempotency_key,
         response=resp.model_dump(),
     )
