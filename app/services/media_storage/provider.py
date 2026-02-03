@@ -7,6 +7,7 @@ from app.services.media_storage.local import LocalMediaStorage
 
 @lru_cache(maxsize=1)
 def get_media_storage() -> MediaStorage:
-    # later: switch by settings.media_backend
-    base_dir = getattr(settings, "media_local_dir", "var/media")
-    return LocalMediaStorage(base_dir=base_dir)
+    # switch by settings.media_backend
+    if settings.media_backend == "local":
+        return LocalMediaStorage(base_dir=settings.media_local_dir)
+    raise RuntimeError(f"unsupported media_backend: {settings.media_backend}")

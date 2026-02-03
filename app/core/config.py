@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -34,8 +35,11 @@ class Settings(BaseSettings):
     credentials_encryption_key: SecretStr = SecretStr("IN_ENV")
 
     # Storage local object store dir
-    
     feed_storage_dir: str = "./var/feeds"
+
+    # Media storage
+    media_backend: Literal["local"] = "local"
+    media_local_dir: str = "./var/media"
 
 
 settings = Settings()
