@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     # Security
     api_key_pepper: SecretStr = SecretStr("IN_ENV")
+    public_token_pepper: SecretStr = SecretStr("IN_ENV")
 
     # bootstrap protection (temporary)
     internal_admin_key: str = "IN_ENV"
