@@ -40,6 +40,12 @@ class LocalMediaStorage(MediaStorage):
         self.base_dir = Path(base_dir)
 
 
+    def resolve_local_path(self, *, backend: str, key: str) -> Path | None:
+        if backend != "local":
+            return None
+        return _safe_join(self.base_dir, key)
+
+
     async def put_file(
         self,
         *,

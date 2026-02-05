@@ -33,7 +33,7 @@ async def rotate_media_public_token(
 
     tok = generate_public_token()
     signing_secret = generate_signing_secret()
-    cipher = encrypt_json({"v": 1, "token": tok.plain, "signing_secret": signing_secret})
+    cipher = encrypt_json({"v": 1, "signing_secret": signing_secret})
 
     row = PartnerPublicToken(
         tenant_id=actor.tenant_id,
@@ -80,11 +80,11 @@ async def rotate_media_public_token(
         log.exception("rotate media public token failed (integrity error)")
         raise HTTPException(status_code=409, detail="Constraint violation")
 
-    # return plain token once (partner should store it)
+    
     return RotateMediaPublicTokenOut(
         partner_id=partner_id,
         scope="media",
-        token_id=row.id,
-        public_token=tok.plain,
+        token_id=row.id,  # this is the kid
+        public_token=None,
         token_prefix=tok.prefix,
     )

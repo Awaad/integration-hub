@@ -36,3 +36,11 @@ class MediaStorage:
 
     async def exists(self, *, backend: str, key: str) -> bool:
         raise NotImplementedError
+
+
+    def resolve_local_path(self, *, backend: str, key: str) -> Path | None:
+        """
+        For backends that are file-based (local), return a safe absolute Path.
+        For non-local backends, return None.
+        """
+        return None

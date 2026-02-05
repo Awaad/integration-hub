@@ -21,16 +21,18 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + pad)
 
 
-def sign_media_url(*, secret: str, media_id: str, expires: int, variant: str, token_prefix: str) -> MediaSignature:
+def sign_media_url(*, secret: str, media_id: str, expires: int, variant: str, kid: str) -> MediaSignature:
     variant = variant.strip().lower()
-    token_prefix = token_prefix.strip()
+    media_id = media_id.strip()
+    expires = int(expires)
+    kid = kid.strip()
     key = _b64url_decode(secret)
 
-    msg = f"v1.{media_id}.{expires}.{variant}.{token_prefix}".encode("utf-8")
+    msg = f"v1.{media_id}.{expires}.{variant}.{kid}".encode("utf-8")
     mac = hmac.new(key, msg, hashlib.sha256).digest()
     return MediaSignature(sig=_b64url(mac))
 
 
-def verify_media_sig(*, secret: str, media_id: str, expires: int, variant: str, token_prefix: str, sig: str) -> bool:
-    expected = sign_media_url(secret=secret, media_id=media_id, expires=expires, variant=variant, token_prefix=token_prefix).sig
+def verify_media_sig(*, secret: str, media_id: str, expires: int, variant: str, kid: str, sig: str) -> bool:
+    expected = sign_media_url(secret=secret, media_id=media_id, expires=expires, variant=variant, kid=kid).sig
     return hmac.compare_digest(expected, sig)
