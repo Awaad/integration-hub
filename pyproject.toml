@@ -30,6 +30,7 @@ opentelemetry-instrumentation-sqlalchemy = "^0.60b1"
 opentelemetry-instrumentation-requests = "^0.60b1"
 opentelemetry-instrumentation-logging = "^0.60b1"
 email-validator = "^2.3.0"
+pillow = "^12.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
