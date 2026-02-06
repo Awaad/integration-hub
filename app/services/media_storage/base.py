@@ -33,6 +33,10 @@ class MediaStorage:
             byte_size: int,
             ) -> StoredObject:
         raise NotImplementedError
+    
+    async def put_bytes_at_key(self, *, key: str, data: bytes) -> StoredObject:
+        """Write bytes to an explicit storage key (used for variants)."""
+        raise NotImplementedError
 
     async def exists(self, *, backend: str, key: str) -> bool:
         raise NotImplementedError

@@ -42,5 +42,14 @@ class Settings(BaseSettings):
     media_backend: Literal["local"] = "local"
     media_local_dir: str = "./var/media"
 
+    media_variants: dict[str, int] = {
+        "thumb": 256,
+        "medium": 1024,
+        "large": 2048,
+    }
+    media_variant_format: str = "webp"  # "webp" or "jpeg"
+    media_variant_quality: int = 82
+    media_variant_pipeline_version: str = "v1"
+
 
 settings = Settings()

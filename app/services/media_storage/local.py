@@ -151,6 +151,34 @@ class LocalMediaStorage(MediaStorage):
 
         byte_size = await anyio.to_thread.run_sync(_write_if_missing)
         return StoredObject(backend="local", key=key, byte_size=int(byte_size))
+    
+
+    async def put_bytes_at_key(self, *, key: str, data: bytes) -> StoredObject:
+        path = _safe_join(self.base_dir, key)
+
+        def _write_if_missing() -> int:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                return path.stat().st_size
+
+            tmp = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
+            with open(tmp, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            try:
+                os.replace(tmp, path)
+            finally:
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except Exception:
+                        pass
+            return path.stat().st_size
+
+        size = await anyio.to_thread.run_sync(_write_if_missing)
+        return StoredObject(backend="local", key=key, byte_size=int(size))
+
 
     async def exists(self, *, backend: str, key: str) -> bool:
         if backend != "local":
