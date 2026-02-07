@@ -13,6 +13,7 @@ from app.destinations.registry import get_destination_connector
 from app.projections.registry import get_projector
 from app.projections.base import ProjectionContext
 from app.services.destination_config import destination_mode
+from app.services.media_urls import resolve_listing_media_urls
 
 
 
@@ -21,23 +22,50 @@ async def _project_listing(
     *,
     tenant_id: str,
     partner_id: str,
-    agent_id: str,
+    agent_id: str | None,
     destination: str,
     listing_id: str,
 ) -> tuple[dict, str | None]:
-    listing = (await db.execute(select(Listing).where(
+    where = [
         Listing.id == listing_id,
         Listing.tenant_id == tenant_id,
         Listing.partner_id == partner_id,
-        )
-        )).scalar_one()
+    ]
+    if agent_id:
+        where.append(Listing.agent_id == agent_id)
+
+    listing = (await db.execute(select(Listing).where(*where))).scalar_one()
+
+    # Build canonical payload but prefer Hub media URLs if listing_media exists.
+    canonical_payload = dict(listing.payload or {})
+
+    media_items = await resolve_listing_media_urls(
+        db,
+        tenant_id=tenant_id,
+        partner_id=partner_id,
+        agent_id=agent_id,          
+        listing_id=listing.id,
+        variant="large",
+    )
+
+    if media_items:
+        canonical_payload["media"] = [
+            {
+                "url": mi["url"],
+                "type": mi["type"],
+                "order": mi["order"],
+                "caption": mi["caption"],
+            }
+            for mi in media_items
+        ]
 
     Model = resolve_schema(listing.schema, listing.schema_version)
-    canonical_any = Model.model_validate(listing.payload)
+    canonical_any = Model.model_validate(canonical_payload)
 
-    # publish path expects canonical listing 
     if not isinstance(canonical_any, ListingCanonicalV1):
-        raise ValueError(f"Unsupported canonical type for publish: {listing.schema}@{listing.schema_version}")
+        raise ValueError(
+            f"Unsupported canonical type for publish: {listing.schema}@{listing.schema_version}"
+        )
 
     canonical = canonical_any
 
@@ -96,7 +124,7 @@ async def build_projected_payload_from_parts(
     *,
     tenant_id: str,
     partner_id: str,
-    agent_id: str,
+    agent_id: str | None,
     destination: str,
     listing_id: str,
 ) -> tuple[dict, str | None]:
