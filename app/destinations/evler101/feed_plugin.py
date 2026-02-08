@@ -19,7 +19,7 @@ from app.models.geo_area import GeoArea
 from app.models.partner_public_token import PartnerPublicToken
 from app.services.feeds.evler101_xml import build_101evler_xml, Evler101Ad
 from app.services.listing_state import canonical_status, should_include_listing
-from app.services.media_urls import resolve_listing_media_urls
+from app.services.media_urls import resolve_listing_media_urls_bulk, partner_has_active_media_token
 from app.destinations.feeds.base import FeedBuildOutput
 from app.destinations.evler101.ad_projection import project_ad_fields
 from app.destinations.registry import get_destination_connector
@@ -87,19 +87,8 @@ class Evler101FeedPlugin:
         # Pre-check whether partner has an active media token
         hub_media_available = False
         if use_hub_media:
-            hub_media_available = bool(
-                (
-                    await db.execute(
-                        select(PartnerPublicToken.id)
-                        .where(
-                            PartnerPublicToken.tenant_id == tenant_id,
-                            PartnerPublicToken.partner_id == partner_id,
-                            PartnerPublicToken.scope == "media",
-                            PartnerPublicToken.is_active.is_(True),
-                        )
-                        .limit(1)
-                    )
-                ).scalar_one_or_none()
+            hub_media_available = await partner_has_active_media_token(
+                db, tenant_id=tenant_id, partner_id=partner_id
             )
 
         rows = (
@@ -139,11 +128,11 @@ class Evler101FeedPlugin:
         enum_cache: dict[tuple[str, str], str | None] = {}
 
         async def enum_cached(ns: str, key: Any) -> str | None:
-            ns = (ns or "").strip().lower()
+            ns = (ns or "").strip()
 
             if key is None:
                 return None
-            key_s = str(key)
+            key_s = str(key).strip()
             if not key_s:
                 return None
             k = (ns, key_s)
@@ -169,6 +158,18 @@ class Evler101FeedPlugin:
 
         hub_media_used = 0
         hub_media_fallback = 0
+
+        media_map: dict[str, list[dict[str, Any]]] = {}
+        if use_hub_media and hub_media_available:
+            listing_ids = [r.id for r in rows if getattr(r, "id", None)]
+            media_map = await resolve_listing_media_urls_bulk(
+                db,
+                tenant_id=tenant_id,
+                partner_id=partner_id,
+                listing_ids=listing_ids,
+                agent_id=None,          # partner-wide feed
+                variant=hub_variant,
+            )
 
         for r in rows:
             status = canonical_status(r.payload)
@@ -277,14 +278,7 @@ class Evler101FeedPlugin:
             pics: list[dict[str, Any]] = []
 
             if use_hub_media and hub_media_available:
-                media_items = await resolve_listing_media_urls(
-                    db,
-                    tenant_id=tenant_id,
-                    partner_id=partner_id,
-                    agent_id=r.agent_id,  # enforce agent isolation
-                    listing_id=r.id,
-                    variant=hub_variant,
-                )
+                media_items = media_map.get(r.id) or []
 
                 if media_items:
                     img_items = [mi for mi in media_items if (mi.get("type") or "") == "image"]
@@ -310,6 +304,7 @@ class Evler101FeedPlugin:
                 else:
                     hub_media_fallback += 1
 
+            # Fallback to canonical URLs
             images = [m for m in (can.media or []) if m.type == "image"]
             images_sorted = sorted(images, key=lambda m: (int(getattr(m, "order", 0) or 0), str(getattr(m, "id", "") or "")))
             for idx, m in enumerate(images_sorted, start=1):
