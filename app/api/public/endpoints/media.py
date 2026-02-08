@@ -24,7 +24,7 @@ router = APIRouter()
 
 _ALLOWED_VARIANTS = {"orig", "thumb", "medium", "large"}
 _MAX_TTL = 7 * 24 * 3600
-_REDIRECT_TTL = 120
+_REDIRECT_TTL = 60
 
 
 def _etag_value(etag: str) -> str:
@@ -50,7 +50,8 @@ def _if_none_match_matches(inm: str | None, etag: str) -> bool:
 async def public_media_redirect(
     media_id: str,
     variant: str = Query("orig"),
-    kid: str = Query(...),
+    #  kid kept optional (debug/compat), but not required
+    kid: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     variant = (variant or "orig").strip().lower()
@@ -61,19 +62,34 @@ async def public_media_redirect(
     if not m:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    tok = (
-        await db.execute(
-            select(PartnerPublicToken).where(
-                PartnerPublicToken.id == kid,
-                PartnerPublicToken.tenant_id == m.tenant_id,
-                PartnerPublicToken.partner_id == m.partner_id,
-                PartnerPublicToken.scope == "media",
-                PartnerPublicToken.is_active.is_(True),
+    # Prefer explicit kid if present; else resolve active token for this partner
+    if kid:
+        tok = (
+            await db.execute(
+                select(PartnerPublicToken).where(
+                    PartnerPublicToken.id == kid,
+                    PartnerPublicToken.tenant_id == m.tenant_id,
+                    PartnerPublicToken.partner_id == m.partner_id,
+                    PartnerPublicToken.scope == "media",
+                    PartnerPublicToken.is_active.is_(True),
+                )
             )
-        )
-    ).scalar_one_or_none()
+        ).scalar_one_or_none()
+    else:
+        tok = (
+            await db.execute(
+                select(PartnerPublicToken).where(
+                    PartnerPublicToken.tenant_id == m.tenant_id,
+                    PartnerPublicToken.partner_id == m.partner_id,
+                    PartnerPublicToken.scope == "media",
+                    PartnerPublicToken.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+
     if not tok:
-        raise HTTPException(status_code=403, detail="Invalid token")
+        raise HTTPException(status_code=403, detail="No active media token")
+    
 
     payload = decrypt_json(tok.token_ciphertext)
     signing_secret = payload.get("signing_secret")
@@ -86,16 +102,16 @@ async def public_media_redirect(
         media_id=media_id,
         expires=expires,
         variant=variant,
-        kid=kid,
+        kid=tok.id,
     ).sig
 
-    qs = urlencode({"expires": expires, "variant": variant, "kid": kid, "sig": sig})
+    qs = urlencode({"expires": expires, "variant": variant, "kid": tok.id, "sig": sig})
     location = f"/public/media/{media_id}?{qs}"
 
     return RedirectResponse(
         url=location,
         status_code=307,
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
