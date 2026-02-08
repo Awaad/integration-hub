@@ -47,6 +47,7 @@ async def resolve_listing_media_urls_bulk(
     partner_id: str,
     listing_ids: Iterable[str],
     agent_id: str | None = None,
+    expected_agent_id: str | None = None,
     variant: str = "large",
     chunk_size: int = _DEFAULT_CHUNK,
 ) -> dict[str, list[dict[str, Any]]]:
@@ -80,6 +81,9 @@ async def resolve_listing_media_urls_bulk(
         ]
         if agent_id is not None:
             where_clauses.append(ListingMedia.agent_id == agent_id)
+            
+        if expected_agent_id is not None:
+            where_clauses.append(ListingMedia.agent_id == expected_agent_id)
 
         rows = (
             await db.execute(
@@ -117,6 +121,7 @@ async def resolve_listing_media_urls(
     tenant_id: str,
     partner_id: str,
     agent_id: str | None,
+    expected_agent_id: str | None = None,
     listing_id: str,
     variant: str = "large",
 ) -> list[dict[str, Any]]:
@@ -140,6 +145,9 @@ async def resolve_listing_media_urls(
     if agent_id is not None:
         where_clauses.append(ListingMedia.agent_id == agent_id)
 
+    if expected_agent_id is not None:
+        where_clauses.append(ListingMedia.agent_id == expected_agent_id)
+
     rows = (
         await db.execute(
             select(ListingMedia, MediaObject)
@@ -162,8 +170,8 @@ async def resolve_listing_media_urls(
     base = settings.public_base_url.rstrip("/")
     out: list[dict[str, Any]] = []
 
+    qs = urlencode({"variant": variant})
     for lm, m in rows:
-        qs = urlencode({"variant": variant})
         url = f"{base}/public/media/{m.id}/r?{qs}"
 
         out.append(
