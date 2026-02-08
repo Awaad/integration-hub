@@ -61,7 +61,7 @@ class PartnerCSVFeedPlugin:
             if policy == "include_with_status":
                 out_row.append(status)
 
-            w.writerow([can.canonical_id, can.title or "", price, cur, city])
+            w.writerow(out_row)
             count += 1
 
         data = buf.getvalue().encode("utf-8")
