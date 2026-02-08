@@ -11,6 +11,7 @@ from app.destinations.feeds.base import FeedBuildOutput
 from app.destinations.registry import get_destination_connector
 from app.canonical.v1.listing import ListingCanonicalV1
 from app.models.listing import Listing
+from app.models.agent_external_identity import AgentExternalIdentity
 from app.services.listing_state import canonical_status, should_include_listing
 from app.services.feed_stats import summarize_skips
 from app.services.media_urls import partner_has_active_media_token, resolve_listing_media_urls_bulk          
@@ -23,6 +24,28 @@ _ALLOWED_VARIANTS = {"orig", "thumb", "medium", "large"}
 def _join_urls(items: list[dict[str, Any]]) -> str:
     # Keep order stable
     return "|".join(str(i["url"]) for i in items if i.get("url"))
+
+
+def _room_count_fields(can: ListingCanonicalV1) -> tuple[str, str, str]:
+    """
+    Returns (bedrooms, living_rooms, room_count_key e.g. "3+1").
+    Empty strings if missing.
+    """
+    b = ""
+    lr = ""
+    rc = ""
+    prop = getattr(can, "property", None)
+    if prop:
+        b_val = getattr(prop, "bedrooms", None)
+        lr_val = getattr(prop, "living_rooms", None)
+        if b_val is not None:
+            b = str(b_val)
+        if lr_val is not None:
+            lr = str(lr_val)
+        if b_val is not None and lr_val is not None:
+            rc = f"{b_val}+{lr_val}"
+    return b, lr, rc
+
 
 
 class PartnerCSVFeedPlugin:
@@ -71,11 +94,43 @@ class PartnerCSVFeedPlugin:
                 variant=hub_variant,
             )
 
+        # Bulk external agent ids (destination = "partner_csv")
+        agent_ids = sorted({r.agent_id for r in rows if getattr(r, "agent_id", None)})
+        ext_agent_by_agent: dict[str, str] = {}
+        if agent_ids:
+            ext_rows = (
+                await db.execute(
+                    select(
+                        AgentExternalIdentity.agent_id,
+                        AgentExternalIdentity.external_agent_id,
+                    ).where(
+                        AgentExternalIdentity.tenant_id == tenant_id,
+                        AgentExternalIdentity.partner_id == partner_id,
+                        AgentExternalIdentity.destination == self.destination,
+                        AgentExternalIdentity.is_active.is_(True),
+                        AgentExternalIdentity.agent_id.in_(agent_ids),
+                    )
+                )
+            ).all()
+            ext_agent_by_agent = {aid: ext for (aid, ext) in ext_rows}
+
         buf = StringIO()
         w = csv.writer(buf)
     
         # Header depends on policy
-        header = ["listing_id", "title", "price_amount", "currency", "city", "media_urls"]
+        header = [
+            "listing_id",
+             "agent_id",
+             "external_agent_id",
+             "title",
+             "price_amount",
+             "currency",
+             "city",
+             "bedrooms",
+             "living_rooms",
+             "room_count",
+             "media_urls",
+        ]
         if policy == "include_with_status":
             header.append("status")
         w.writerow(header)
@@ -83,6 +138,7 @@ class PartnerCSVFeedPlugin:
         count = 0
         hub_media_used = 0
         hub_media_fallback = 0
+        missing_ext_agent = 0
 
         for r in rows:
             status = canonical_status(r.payload)
@@ -96,6 +152,15 @@ class PartnerCSVFeedPlugin:
             price = can.list_price.amount if can.list_price else ""
             cur = can.list_price.currency if can.list_price else ""
             city = can.address.city if can.address else ""
+
+            bedrooms, living_rooms, room_count = _room_count_fields(can)
+
+            # external agent id is optional, but if agent_id is present and no ext agent id found, count it as missing. could be a misconfiguration
+            ext_agent_id = ""
+            if getattr(r, "agent_id", None):
+                ext_agent_id = ext_agent_by_agent.get(r.agent_id) or ""
+                if not ext_agent_id:
+                    missing_ext_agent += 1
 
             media_urls = ""
             if use_hub_media and hub_media_available:
@@ -113,7 +178,19 @@ class PartnerCSVFeedPlugin:
                 img_sorted = sorted(img, key=lambda m: (int(getattr(m, "order", 0) or 0), str(getattr(m, "id", "") or "")))
                 media_urls = "|".join(str(m.url) for m in img_sorted)
 
-            out_row = [can.canonical_id, can.title or "", price, cur, city, media_urls]
+            out_row = [
+                can.canonical_id,
+                getattr(r, "agent_id", "") or "",
+                ext_agent_id,
+                can.title or "",
+                price,
+                cur,
+                city,
+                bedrooms,
+                living_rooms,
+                room_count,
+                media_urls,
+            ]
             if policy == "include_with_status":
                 out_row.append(status)
 
