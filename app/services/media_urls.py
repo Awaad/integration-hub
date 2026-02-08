@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -8,8 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.crypto import decrypt_json
-from app.core.media_signing import sign_media_url
 from app.models.listing_media import ListingMedia
 from app.models.media_object import MediaObject
 from app.models.partner_public_token import PartnerPublicToken
@@ -25,7 +22,6 @@ async def resolve_listing_media_urls(
     agent_id: str | None,
     listing_id: str,
     variant: str = "large",
-    expires_in: int = 3600,
 ) -> list[dict[str, Any]]:
     """
     If listing_media exists => return Hub signed public URLs.
@@ -62,25 +58,27 @@ async def resolve_listing_media_urls(
     if not rows:
         return []
 
-    tok = (
+    # Only emit Hub URLs if partner has an active media token.
+    tok_exists = (
         await db.execute(
-            select(PartnerPublicToken).where(
+            select(PartnerPublicToken.id).where(
                 PartnerPublicToken.tenant_id == tenant_id,
                 PartnerPublicToken.partner_id == partner_id,
                 PartnerPublicToken.scope == "media",
                 PartnerPublicToken.is_active.is_(True),
-            )
+            ).limit(1)
         )
     ).scalar_one_or_none()
 
-    if not tok:
+    if not tok_exists:
         # no token -> fallback to canonical/raw
         return []
 
     base = settings.public_base_url.rstrip("/")
     out: list[dict[str, Any]] = []
+
     for lm, m in rows:
-        qs = urlencode({"variant": variant, "kid": tok.id})
+        qs = urlencode({"variant": variant})
         url = f"{base}/public/media/{m.id}/r?{qs}"
 
         out.append(
