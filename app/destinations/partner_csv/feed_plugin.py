@@ -13,6 +13,16 @@ from app.canonical.v1.listing import ListingCanonicalV1
 from app.models.listing import Listing
 from app.services.listing_state import canonical_status, should_include_listing
 from app.services.feed_stats import summarize_skips
+from app.services.media_urls import partner_has_active_media_token, resolve_listing_media_urls_bulk          
+    
+   
+
+_ALLOWED_VARIANTS = {"orig", "thumb", "medium", "large"}
+
+
+def _join_urls(items: list[dict[str, Any]]) -> str:
+    # Keep order stable
+    return "|".join(str(i["url"]) for i in items if i.get("url"))
 
 
 class PartnerCSVFeedPlugin:
@@ -21,29 +31,59 @@ class PartnerCSVFeedPlugin:
 
     async def build(self, *, db: AsyncSession, tenant_id: str, partner_id: str, config: dict[str, Any]) -> FeedBuildOutput:
 
+        feed_cfg = config or {}
+
+        use_hub_media = bool(feed_cfg.get("use_hub_media_urls"))
+        hub_variant = (feed_cfg.get("hub_media_variant") or "large").strip().lower()
+        if hub_variant not in _ALLOWED_VARIANTS:
+            hub_variant = "large"
+
         connector = get_destination_connector(self.destination)
         policy = connector.capabilities().listing_inclusion_policy
 
         rows = (await db.execute(select(Listing).where(
             Listing.tenant_id == tenant_id,
             Listing.partner_id == partner_id,
+            Listing.is_active.is_(True),
             Listing.schema == "canonical.listing",
-            Listing.schema_version == "1.0",
+            Listing.schema_version.in_(["1.0.0", "1.0"]),
         ))).scalars().all()
 
         skipped: list[dict[str, Any]] = []
 
+        # Pre-check token availability once
+        hub_media_available = False
+        if use_hub_media:
+            hub_media_available = await partner_has_active_media_token(
+                db, tenant_id=tenant_id, partner_id=partner_id
+            )
+
+        # Bulk media lookup once 
+        media_map: dict[str, list[dict[str, Any]]] = {}
+        if use_hub_media and hub_media_available and rows:
+            listing_ids = [r.id for r in rows if getattr(r, "id", None)]
+            media_map = await resolve_listing_media_urls_bulk(
+                db,
+                tenant_id=tenant_id,
+                partner_id=partner_id,
+                listing_ids=listing_ids,
+                agent_id=None,  # partner-wide feed
+                variant=hub_variant,
+            )
+
         buf = StringIO()
         w = csv.writer(buf)
-        w.writerow(["listing_id", "title", "price_amount", "currency", "city"])
-
+    
         # Header depends on policy
-        header = ["listing_id", "title", "price_amount", "currency", "city"]
+        header = ["listing_id", "title", "price_amount", "currency", "city", "media_urls"]
         if policy == "include_with_status":
             header.append("status")
         w.writerow(header)
 
         count = 0
+        hub_media_used = 0
+        hub_media_fallback = 0
+
         for r in rows:
             status = canonical_status(r.payload)
 
@@ -57,7 +97,23 @@ class PartnerCSVFeedPlugin:
             cur = can.list_price.currency if can.list_price else ""
             city = can.address.city if can.address else ""
 
-            out_row = [can.canonical_id, can.title or "", price, cur, city]
+            media_urls = ""
+            if use_hub_media and hub_media_available:
+                items = media_map.get(r.id) or []
+                
+                img_items = [mi for mi in items if (mi.get("type") or "") == "image"]
+                if img_items:
+                    hub_media_used += 1
+                    media_urls = _join_urls(img_items)
+                else:
+                    hub_media_fallback += 1
+            # fallback: use canonical media urls if hub not present
+            if not media_urls:
+                img = [m for m in (can.media or []) if m.type == "image" and getattr(m, "url", None)]
+                img_sorted = sorted(img, key=lambda m: (int(getattr(m, "order", 0) or 0), str(getattr(m, "id", "") or "")))
+                media_urls = "|".join(str(m.url) for m in img_sorted)
+
+            out_row = [can.canonical_id, can.title or "", price, cur, city, media_urls]
             if policy == "include_with_status":
                 out_row.append(status)
 
@@ -74,6 +130,11 @@ class PartnerCSVFeedPlugin:
             "listing_inclusion_policy": policy,
             "skipped_count": int(sum(skipped_by_reason.values())),
             "skipped_by_reason": dict(skipped_by_reason),
+             "hub_media_enabled": bool(use_hub_media),
+            "hub_media_available": bool(hub_media_available) if use_hub_media else None,
+            "hub_media_variant": hub_variant if use_hub_media else None,
+            "hub_media_used": hub_media_used,
+            "hub_media_fallback": hub_media_fallback,
         }
         meta["skipped"] = skipped[:200]
 
