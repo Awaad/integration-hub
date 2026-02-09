@@ -132,7 +132,7 @@ class PartnerCSVFeedPlugin:
                 tenant_id=tenant_id,
                 partner_id=partner_id,
                 listing_ids=listing_ids,
-                agent_id=None,  # partner-wide feed
+                expected_agent_id=None,
                 variant=hub_variant,
             )
 
