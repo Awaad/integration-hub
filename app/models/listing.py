@@ -1,6 +1,8 @@
-from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
+from datetime import datetime
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Integer, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
 
 from app.core.ids import gen_id
 
@@ -40,3 +42,21 @@ class Listing(AuditMixin, Base):
     content_hash: Mapped[str] = mapped_column(String(80), nullable=False)
 
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+    #  Media normalization retry fields 
+    media_normalized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    media_normalization_error: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    media_normalization_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    media_normalization_next_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    media_normalization_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
