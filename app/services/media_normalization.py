@@ -96,7 +96,8 @@ async def normalize_listing_media(
     if not listing.agent_id:
         raise ValueError("listing.agent_id is required for media normalization")
 
-    await mark_started(db, model=Listing, row_id=listing.id, plan=LISTING_MEDIA_RETRY, actor_id=actor_id)
+    if listing.media_normalization_started_at is None:
+        await mark_started(db, model=Listing, row_id=listing.id, plan=LISTING_MEDIA_RETRY, actor_id=actor_id)
 
     payload = listing.payload or {}
     media = payload.get("media") or []
