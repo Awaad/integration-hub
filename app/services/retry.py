@@ -46,7 +46,6 @@ async def mark_started(
 ) -> None:
     values: dict[str, object] = {"updated_by": actor_id}
 
-
     if plan.started_at_col:
         values[plan.started_at_col] = func.now()
 
