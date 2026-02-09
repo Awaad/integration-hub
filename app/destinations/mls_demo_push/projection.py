@@ -33,6 +33,13 @@ def project_mls_demo_push(
         # destination policy may exclude inactive; projection still can return a "status" field
         warnings.append(ProjectionWarning(code="INACTIVE", message=f"Listing status={status}"))
 
+    # Normalize media ordering + drop empty urls defensively
+    media_items = list(canonical.media or [])
+    media_items_sorted = sorted(
+        [m for m in media_items if getattr(m, "url", None)],
+        key=lambda m: (int(getattr(m, "order", 0) or 0), str(getattr(m, "url", ""))),
+    )
+
     # avoid destination-specific naming for now
     p = {
         "schema": "mls_demo_push.listing",
@@ -70,10 +77,10 @@ def project_mls_demo_push(
             {
                 "url": str(m.url),
                 "type": m.type,
-                "order": m.order,
+                "order": int(m.order) if getattr(m, "order", None) is not None else None,
                 "caption": getattr(m, "caption", None),
             }
-            for m in (canonical.media or [])
+            for m in media_items_sorted
         ],
     }
 
