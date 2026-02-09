@@ -46,8 +46,6 @@ async def mark_started(
 ) -> None:
     values: dict[str, object] = {"updated_by": actor_id}
 
-    # clear next_at so it won't be re-picked as "due"
-    values[plan.next_at_col] = None
 
     if plan.started_at_col:
         values[plan.started_at_col] = func.now()
@@ -99,7 +97,7 @@ async def mark_failure(
 ) -> None:
     delay = compute_backoff_seconds(attempt_after, base=base, cap=cap, rng=rng)
 
-    next_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+    next_at = func.now() + timedelta(seconds=delay)
 
     values: dict[str, object] = {
         "updated_by": actor_id,
