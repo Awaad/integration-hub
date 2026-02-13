@@ -1,7 +1,7 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0030_listing_media_normalized_hash"
+revision = "0030_listing_media_norm_hash"
 down_revision = "0029_list_med_norm_retry_fields"
 branch_labels = None
 depends_on = None
