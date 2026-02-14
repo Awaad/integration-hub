@@ -4,28 +4,41 @@ import socket
 import ipaddress
 from urllib.parse import urlparse
 
+from app.services.media_errors import (
+    MediaErrorCode,
+    MediaForbiddenError,
+    MediaRetryableError,
+)
 
-class MediaForbiddenError(Exception):
-    pass
+_ALLOWED_SCHEMES = ("http", "https")
+_ALLOWED_PORTS = (80, 443)
 
 
-def _is_private_ip(host: str) -> bool:
+def _resolve_ips(hostname: str) -> list[str]:
+    infos = socket.getaddrinfo(hostname, None)
+    if len(infos) > 32:
+        raise MediaForbiddenError(
+            MediaErrorCode.DNS_FAILED,
+            "too many DNS results",
+        )
+    return [sockaddr[0] for *_rest, sockaddr in infos]
+
+
+def _is_ip_literal(host: str) -> bool:
     try:
-        infos = socket.getaddrinfo(host, None)
-        for family, _, _, _, sockaddr in infos:
-            ip_str = sockaddr[0]
-            ip = ipaddress.ip_address(ip_str)
-            if (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_reserved
-                or ip.is_multicast
-            ):
-                return True
-        return False
-    except Exception:
+        ipaddress.ip_address(host)
         return True
+    except ValueError:
+        return False
+
+
+def _assert_ip_is_public(ip_str: str) -> None:
+    ip = ipaddress.ip_address(ip_str)
+    if not ip.is_global:
+        raise MediaForbiddenError(
+            MediaErrorCode.FORBIDDEN_HOST,
+            f"non-global ip {ip_str}",
+        )
 
 
 def validate_media_url(
@@ -34,21 +47,69 @@ def validate_media_url(
     allow_external: bool,
     allowed_domains: list[str],
 ) -> None:
+    """
+    Full SSRF + policy enforcement.
+    SINGLE SOURCE OF TRUTH.
+    """
+
+    if not url:
+        raise MediaForbiddenError(MediaErrorCode.MISSING_URL, "missing url")
+
     parsed = urlparse(url)
 
-    if parsed.scheme not in ("http", "https"):
-        raise MediaForbiddenError("unsupported URL scheme")
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise MediaForbiddenError(
+            MediaErrorCode.FORBIDDEN_SCHEME,
+            parsed.scheme or "",
+        )
+
+    if parsed.username or parsed.password:
+        raise MediaForbiddenError(
+            MediaErrorCode.INVALID_URL,
+            "credentials not allowed",
+        )
 
     if not parsed.hostname:
-        raise MediaForbiddenError("missing hostname")
+        raise MediaForbiddenError(
+            MediaErrorCode.MISSING_URL,
+            "missing hostname",
+        )
 
-    if _is_private_ip(parsed.hostname):
-        raise MediaForbiddenError("private or internal IP not allowed")
+    if parsed.port and parsed.port not in _ALLOWED_PORTS:
+        raise MediaForbiddenError(
+            MediaErrorCode.FORBIDDEN_PORT,
+            str(parsed.port),
+        )
 
     if not allow_external:
-        raise MediaForbiddenError("external media disabled")
+        raise MediaForbiddenError(
+            MediaErrorCode.EXTERNAL_DISABLED,
+            "external ingest disabled",
+        )
 
+    host = parsed.hostname.lower()
+
+    # Domain allowlist
     if allowed_domains:
-        host = parsed.hostname.lower()
-        if not any(host == d or host.endswith("." + d) for d in allowed_domains):
-            raise MediaForbiddenError("domain not allowlisted")
+        if not any(
+            host == d or host.endswith("." + d)
+            for d in allowed_domains
+        ):
+            raise MediaForbiddenError(
+                MediaErrorCode.DOMAIN_NOT_ALLOWED,
+                host,
+            )
+
+    # SSRF protection
+    if _is_ip_literal(host):
+        _assert_ip_is_public(host)
+    else:
+        try:
+            ips = _resolve_ips(host)
+        except socket.gaierror as e:
+            raise MediaRetryableError(
+                MediaErrorCode.DNS_FAILED,
+                str(e),
+            )
+        for ip in ips:
+            _assert_ip_is_public(ip)
