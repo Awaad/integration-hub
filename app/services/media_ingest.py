@@ -17,6 +17,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.ids import gen_id
 from app.models.media_object import MediaObject
 from app.services.media_storage.provider import get_media_storage
+from app.services.partner_settings_service import get_partner_settings
+from app.services.media_security import validate_media_url
+from app.services.rate_limit import check_rate_limit
+
+from app.services.media_errors import (
+    MediaError,
+    MediaErrorCode,
+    MediaForbiddenError,
+    MediaRetryableError,
+)
+from app.services.media_circuit import check_circuit, record_failure
+
+
 
 MAX_MEDIA_BYTES = 25 * 1024 * 1024  # 25MB
 
@@ -35,86 +48,16 @@ _MIME_TO_EXT = {
 }
 
 _MAX_REDIRECTS = 5
-_ALLOWED_SCHEMES = ("http", "https")
+
 
 
 def _ext_from_mime(mime: str) -> str:
     return _MIME_TO_EXT.get(mime, "bin")
 
 
-def _is_private_host(host: str) -> bool:
-    # host may be an IP literal
-    try:
-        ip = ipaddress.ip_address(host)
-        return (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-        )
-    except ValueError:
-        return False
-
-
-async def _resolve_and_block_private(hostname: str) -> None:
-    """
-    Resolve hostname and reject any non-global IP results.
-    NOTE: This is best-effort SSRF hardening; DNS rebinding is still possible without pinning.
-    """
-
-    def _get_ips() -> list[str]:
-        infos = socket.getaddrinfo(hostname, None)
-        if len(infos) > 32:
-            raise ValueError("too many DNS results")
-        ips: list[str] = []
-        for _fam, _socktype, _proto, _canonname, sockaddr in infos:
-            ips.append(sockaddr[0])
-        return ips
-
-    try:
-        with anyio.fail_after(DNS_TIMEOUT):
-            ips = await anyio.to_thread.run_sync(_get_ips)
-    except (anyio.exceptions.TimeoutError, TimeoutError) as e:
-        raise ValueError("dns lookup timeout") from e
-    except socket.gaierror as e:
-        raise ValueError("dns lookup failed") from e
-
-    for ip_s in ips:
-        try:
-            ip = ipaddress.ip_address(ip_s)
-        except ValueError:
-            continue
-        if not ip.is_global:
-            raise ValueError("forbidden non-global IP host")
-
-
-def _validate_public_url(url: str) -> None:
-    u = urlparse(url)
-
-    if u.username or u.password:
-        raise ValueError("forbidden credentials in URL")
-
-    if u.scheme not in _ALLOWED_SCHEMES:
-        raise ValueError("unsupported URL scheme")
-    if not u.netloc:
-        raise ValueError("missing URL host")
-
-    host = u.hostname or ""
-    if not host:
-        raise ValueError("missing URL host")
-    if host in ("localhost",):
-        raise ValueError("forbidden host")
-    if _is_private_host(host):
-        raise ValueError("forbidden private IP host")
-
-    # Restrict weird ports (SSRF surface)
-    if u.port and u.port not in (80, 443):
-        raise ValueError("forbidden port")
-
-
 def _parse_mime(content_type: str | None) -> str:
     return (content_type or "").split(";", 1)[0].strip().lower()
+
 
 
 def _content_length(resp: httpx.Response) -> int | None:
@@ -161,16 +104,6 @@ async def _stream_to_temp_and_hash(
     """
     Returns (tmp_path, byte_size, content_hash_hex, mime).
     """
-    url = (url or "").strip()
-    _validate_public_url(url)
-
-    # DNS hardening for initial URL (best-effort)
-    host = urlparse(url).hostname
-    if host:
-        try:
-            ipaddress.ip_address(host)  # IP literal -> skip DNS
-        except ValueError:
-            await _resolve_and_block_private(host)
 
     h = hashlib.sha256()
     byte_size = 0
@@ -184,25 +117,26 @@ async def _stream_to_temp_and_hash(
     try:
         with anyio.fail_after(TOTAL_TIMEOUT):
             while True:
-                cur_url = (cur_url or "").strip()
-                _validate_public_url(cur_url)
-
-                # DNS hardening each hop (best-effort)
-                host = urlparse(cur_url).hostname
-                if host:
-                    try:
-                        ipaddress.ip_address(host)
-                    except ValueError:
-                        await _resolve_and_block_private(host)
+                validate_media_url(
+                    cur_url,
+                    allow_external=True,
+                    allowed_domains=[],
+                )
 
                 async with client.stream("GET", cur_url) as resp:
                     if _is_redirect(resp.status_code):
                         if redirects >= _MAX_REDIRECTS:
-                            raise ValueError("too many redirects")
+                            raise MediaForbiddenError(
+                                MediaErrorCode.INVALID_URL,
+                                "too many redirects",
+                            )
 
                         loc = resp.headers.get("location")
                         if not loc:
-                            raise ValueError("redirect missing location")
+                            raise MediaForbiddenError(
+                                MediaErrorCode.INVALID_URL,
+                                "redirect missing location",
+                            )
 
                         # Build absolute URL and validate it (SSRF guard)
                         cur_url = urljoin(cur_url, loc)
@@ -213,12 +147,16 @@ async def _stream_to_temp_and_hash(
 
                     header_mime = _parse_mime(resp.headers.get("content-type"))
                     if header_mime not in ALLOWED_MIME:
-                        raise ValueError(f"unsupported mime_type: {header_mime}")
+                        raise MediaForbiddenError(
+                            MediaErrorCode.UNSUPPORTED_MIME,
+                            header_mime,
+                        )
 
                     cl = _content_length(resp)
                     if cl is not None and cl > MAX_MEDIA_BYTES:
-                        raise ValueError(
-                            f"media_too_large: content-length {cl} > {MAX_MEDIA_BYTES}"
+                        raise MediaForbiddenError(
+                            MediaErrorCode.MEDIA_TOO_LARGE,
+                            str(cl),
                         )
 
                     sniff_buf = bytearray()
@@ -232,7 +170,10 @@ async def _stream_to_temp_and_hash(
                             # size limit
                             byte_size += len(chunk)
                             if byte_size > MAX_MEDIA_BYTES:
-                                raise ValueError(f"media_too_large: > {MAX_MEDIA_BYTES} bytes")
+                                raise MediaForbiddenError(
+                                    MediaErrorCode.MEDIA_TOO_LARGE,
+                                    str(byte_size),
+                                )
 
                             # sniff first bytes before trusting header
                             if sniff_mime is None and len(sniff_buf) < 32:
@@ -241,23 +182,32 @@ async def _stream_to_temp_and_hash(
                                 if len(sniff_buf) >= 12:  # enough for webp check
                                     sniff_mime = _sniff_image_mime(bytes(sniff_buf))
                                     if sniff_mime and sniff_mime != header_mime:
-                                        raise ValueError(
-                                            f"mime_mismatch: header={header_mime} sniff={sniff_mime}"
+                                        raise MediaForbiddenError(
+                                            MediaErrorCode.MIME_MISMATCH,
+                                            f"{header_mime} != {sniff_mime}",
                                         )
 
                             h.update(chunk)
                             await f.write(chunk)
 
                     # If we never got enough bytes to sniff, accept header MIME (tiny files may still sniff)
-                    final_mime = header_mime
-                    if sniff_mime is not None:
-                        final_mime = sniff_mime
+                    final_mime = header_mime or header_mime
 
                     return tmp_path, byte_size, h.hexdigest(), final_mime
 
     except (anyio.exceptions.TimeoutError, TimeoutError) as e:
         await _cleanup_tmp(tmp_path)
-        raise ValueError("download timeout") from e
+        raise MediaRetryableError(
+            MediaErrorCode.DOWNLOAD_TIMEOUT,
+            "download timed out",
+        )
+    except httpx.HTTPError as e:
+        _cleanup_tmp(tmp_path)
+        raise MediaRetryableError(
+            MediaErrorCode.NETWORK_ERROR,
+            str(e),
+        )
+    
     except Exception:
         await _cleanup_tmp(tmp_path)
         raise
@@ -270,7 +220,7 @@ async def ingest_media_from_url(
     partner_id: str,
     agent_id: str,
     url: str,
-    created_by: str,
+    actor_id: str,
 ) -> MediaObject:
     """
     Download -> hash -> dedupe by (tenant_id, partner_id, agent_id, content_hash)
@@ -281,24 +231,56 @@ async def ingest_media_from_url(
     - Partner admin can publish for agents: handled at authorization layer; this function just enforces
       the scoping by using agent_id as part of the dedupe/storage key.
     """
+    settings = await get_partner_settings(
+        db,
+        tenant_id=tenant_id,
+        partner_id=partner_id,
+    )
+
+    policy = settings.get("media_ingest", {})
+    allow_external = policy.get("allow_external", False)
+    allowed_domains = policy.get("allowed_domains", [])
+    max_per_minute = policy.get("max_per_minute", 60)
+
     url = (url or "").strip()
     if not url:
-        raise ValueError("missing url")
+        if not url:
+            raise MediaForbiddenError(
+                MediaErrorCode.MISSING_URL,
+                "missing url",
+            )
 
-    if not agent_id:
-        raise ValueError("missing agent_id")
+    validate_media_url(
+        url,
+        allow_external=allow_external,
+        allowed_domains=allowed_domains,
+    )
 
-    _validate_public_url(url)
+    cb_key = f"{tenant_id}:{partner_id}"
+
+    await check_circuit(cb_key)
+
+    try:
+        await check_rate_limit(
+            key=cb_key,
+            limit=max_per_minute,
+        )
+    except Exception:
+        raise MediaRetryableError(
+            MediaErrorCode.RATE_LIMITED,
+            "media ingest rate limit exceeded",
+        )
 
     timeout = httpx.Timeout(CONNECT_TIMEOUT, read=READ_TIMEOUT)
     limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+
+    tmp_path: str | None = None
+    
     headers = {
         "User-Agent": "hub-media-normalizer/1.0",
         "Accept": "image/*",
         "Accept-Encoding": "identity",
     }
-
-    tmp_path: str | None = None
 
     async with httpx.AsyncClient(
         timeout=timeout,
@@ -354,8 +336,8 @@ async def ingest_media_from_url(
         source_url=url,
         width=None,
         height=None,
-        created_by=created_by,
-        updated_by=created_by,
+        created_by=actor_id,
+        updated_by=actor_id,
     )
 
     try:
