@@ -8,22 +8,43 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.partner_settings import PartnerSettings
 
 
-DEFAULT_MEDIA_POLICY = {
-    "media_ingest": {
-        "allow_external": False,
+# Single source of truth for defaults
+DEFAULT_PARTNER_SETTINGS: dict[str, Any] = {
+    "media": {
+        "allow_external": True,
         "allowed_domains": [],
-        "max_per_minute": 60,
-    }
+        "max_bytes": 20_000_000,
+        "max_images": 50,
+    },
+    "rate_limit_per_minute": 60,
+    "circuit_breaker_threshold": 5,
 }
 
-def _merge_policy(config: dict) -> dict:
-    merged = copy.deepcopy(DEFAULT_MEDIA_POLICY)
-    for k, v in (config or {}).items():
-        if isinstance(v, dict) and k in merged:
-            merged[k].update(v)
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """
+    Deep merge override into base without mutating inputs.
+    """
+    result = copy.deepcopy(base)
+
+    for k, v in (override or {}).items():
+        if (
+            k in result
+            and isinstance(result[k], dict)
+            and isinstance(v, dict)
+        ):
+            result[k] = _deep_merge(result[k], v)
         else:
-            merged[k] = v
-    return merged
+            result[k] = v
+
+    return result
+
+
+def merge_with_defaults(config: dict | None) -> dict[str, Any]:
+    """
+    Always return a fully-populated config.
+    """
+    return _deep_merge(DEFAULT_PARTNER_SETTINGS, config or {})
 
 
 async def get_partner_settings(
@@ -42,6 +63,6 @@ async def get_partner_settings(
     ).scalar_one_or_none()
 
     if not row:
-        return copy.deepcopy(DEFAULT_MEDIA_POLICY)
+        return copy.deepcopy(DEFAULT_PARTNER_SETTINGS)
 
-    return _merge_policy(row.config)
+    return merge_with_defaults(row.config)
