@@ -4,13 +4,13 @@ import time
 import redis.asyncio as redis
 
 from app.core.config import settings
-
+from app.services.media_errors import (
+    MediaRetryableError,
+    MediaErrorCode,
+)
 
 _redis = redis.from_url(settings.redis_url, decode_responses=True)
 
-
-class MediaRetryableError(Exception):
-    pass
 
 
 async def check_rate_limit(key: str, limit: int, window_seconds: int = 60):
@@ -24,4 +24,7 @@ async def check_rate_limit(key: str, limit: int, window_seconds: int = 60):
         await _redis.expire(redis_key, window_seconds + 5)
 
     if count > limit:
-        raise MediaRetryableError("rate limit exceeded")
+        raise MediaRetryableError(
+            MediaErrorCode.RATE_LIMITED,
+            "rate limit exceeded",
+        )
