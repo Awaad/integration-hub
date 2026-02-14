@@ -237,10 +237,13 @@ async def ingest_media_from_url(
         partner_id=partner_id,
     )
 
-    policy = settings.get("media_ingest", {})
-    allow_external = policy.get("allow_external", False)
-    allowed_domains = policy.get("allowed_domains", [])
-    max_per_minute = policy.get("max_per_minute", 60)
+    media_cfg = settings["media"]
+
+    allow_external = media_cfg["allow_external"]
+    allowed_domains = media_cfg["allowed_domains"]
+    max_bytes = media_cfg["max_bytes"]
+
+    max_per_minute = settings["rate_limit_per_minute"]
 
     url = (url or "").strip()
     if not url:
