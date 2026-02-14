@@ -13,6 +13,9 @@ from app.models.media_object import MediaObject
 from app.services.media_ingest import ingest_media_from_url
 from app.services.retry import RetryPlan, mark_failure, mark_started, mark_success
 
+from app.services.media_errors import MediaForbiddenError, MediaRetryableError
+from app.services.media_circuit import record_failure
+
 
 _MAX_MEDIA_ITEMS = 500
 _PREFETCH_CHUNK = 200
@@ -186,13 +189,26 @@ async def normalize_listing_media(
                     partner_id=listing.partner_id,
                     agent_id=listing.agent_id,
                     url=url,
-                    created_by=actor_id,
+                    actor_id=actor_id,
                 )
                 mo_by_source_url[url] = mo
+
+        except MediaForbiddenError as e:
+            had_errors = True
+            if len(errors) < _MAX_ERROR_SAMPLES:
+                errors.append(e.code.value)
+            continue
+
+        except MediaRetryableError as e:
+            await record_failure(
+                f"{listing.tenant_id}:{listing.partner_id}"
+            )
+            raise
+
         except Exception as e:
             had_errors = True
             if len(errors) < _MAX_ERROR_SAMPLES:
-                errors.append(f"{type(e).__name__}: {e}")
+                errors.append("unexpected_error")
             continue
 
         existing = existing_by_media_id.get(mo.id)
